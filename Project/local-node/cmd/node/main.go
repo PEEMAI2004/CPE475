@@ -76,6 +76,9 @@ func main() {
 				deviceID = parts[1]
 			}
 
+			// Auto-register new devices into database
+			db.RegisterDevice(deviceID)
+
 			reading, err := processor.Parse(msg.Payload)
 			if err != nil {
 				log.Printf("[processor] parse error: %v", err)

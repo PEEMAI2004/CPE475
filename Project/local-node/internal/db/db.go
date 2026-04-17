@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -12,6 +13,7 @@ import (
 
 var (
 	DB *sql.DB
+	knownDevices sync.Map
 )
 
 // InitDB connects to the database.
@@ -135,4 +137,33 @@ func poll() {
 	} else {
 		log.Printf("[db] WARNING: no profile named 'default' found, skipping update")
 	}
+}
+
+// RegisterDevice checks if a device is known, and if not, auto-registers it
+// asynchronously to the 'default' profile.
+func RegisterDevice(deviceID string) {
+	if DB == nil {
+		return
+	}
+	if _, ok := knownDevices.Load(deviceID); ok {
+		return
+	}
+
+	// Mark it conditionally first
+	knownDevices.Store(deviceID, true)
+
+	go func() {
+		_, err := DB.Exec(`
+			INSERT INTO device_profiles (device_id, profile_id) 
+			VALUES ($1, (SELECT id FROM profiles WHERE name='default'))
+			ON CONFLICT (device_id) DO NOTHING
+		`, deviceID)
+		
+		if err != nil {
+			knownDevices.Delete(deviceID) // remove on fail to retry later
+			log.Printf("[db] failed to auto-register device %s: %v", deviceID, err)
+		} else {
+			log.Printf("[db] auto-registered new device: %s", deviceID)
+		}
+	}()
 }

@@ -137,3 +137,6 @@ __azurite_db*__.json
 
 # Arduino
 config.h
+
+# Handoff Context
+Project/handoff_context.md

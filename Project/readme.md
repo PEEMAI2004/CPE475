@@ -28,18 +28,20 @@
 │  │                  │ ─────────────>│                            │  │
 │  │  • BH1750 Light  │               │  • Subscribe potbuddy/raw  │  │
 │  │  • DHT11 Temp    │               │  • Health pre-processing   │  │
-│  │  • Soil Sensor   │               │  • Publish enriched JSON   │  │
-│  │  • WiFi MQTT     │               │  • HTTP API :8080          │  │
-│  └──────────────────┘               └────────────┬───────────────┘  │
-│                                                  │                  │
-│                              MQTT potbuddy/telemetry                │
-│                                                  │                  │
-│                                     ┌────────────▼───────────────┐  │
-│                                     │     Cloud Dashboard         │  │
-│                                     │  mqtt.kaminjitt.com        │  │
-│                                     │  • Real-time gauges        │  │
-│                                     │  • Historical charts       │  │
-│                                     │  • Push notifications      │  │
+│  │  • Soil Sensor   │               │  • DB Auto-provisioning    │  │
+│  │  • WiFi MQTT     │               │  • Publish enriched JSON   │  │
+│  └──────────────────┘               └────────────┬─────────┬─────┘  │
+│                                                  │         │        │
+│                                     ┌────────────▼──────┐  │        │
+│                                     │Manager API & UI Go│  │ MQTT   │
+│                                     │  Port: 8081       │  │        │
+│                                     └────────────┬──────┘  │        │
+│                                                  │         │        │
+│                                     ┌────────────▼─────────▼─────┐  │
+│                                     │         Backends           │  │
+│                                     │ • PostgreSQL (:5432)       │  │
+│                                     │ • Cloud MQTT               │  │
+│                                     │ • Grafana Cloud Dashboard  │  │
 │                                     └────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -103,11 +105,18 @@ graph TD
 
     subgraph Cloud["Cloud"]
         J["Cloud Broker"]
-        K["Dashboard"]
+        K["Grafana Dashboard"]
+    end
+
+    subgraph Management["Management"]
+        L["PostgreSQL Database"]
+        M["Manager API & React UI"]
     end
 
     B -->|WiFi MQTT| C
-    H -->|REST API| K
+    E -->|Database Poll| L
+    D -->|Register Unknown| L
+    M -->|Dynamic CRUD| L
     I -->|telemetry| J
     J --> K
 ```
@@ -362,11 +371,12 @@ PASS   ok  internal/processor  8/8
     - [x] Pre-processing logic (Healthy / Warning / Critical)
     - [x] MQTT Data bridging (Local → Cloud)
     - [x] Simulation test cases
-- [ ] **Cloud Dashboard**
-    - [ ] Real-time data visualization
-    - [ ] Historical data charts
-- [ ] **Plant Care Logic**
-    - [ ] Implement Health Status thresholds (Healthy / Warning / Critical)
+- [x] **Cloud Dashboard**
+    - [x] Real-time data visualization
+    - [x] Historical data charts
+- [x] **Plant Care Logic**
+    - [x] Implement Health Status thresholds via Postgres profiles
+    - [x] Dynamic React Management Dashboard (Manager API)
     - [ ] Email / Notification system
 - [ ] **Physical Prototype**
     - [ ] Case design for "Attachable" feature
