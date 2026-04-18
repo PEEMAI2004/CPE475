@@ -35,7 +35,14 @@ npm install && npm run build
 
 ### 3. Manager API Deployment
 This server serves the configuration and dashboard.
-1. Create a `potbuddy-manager.service` file ensuring `Environment=DB_DSN=postgres://...` points to your central database.
+
+**Environment Variables:**
+| Variable | Description |
+| :--- | :--- |
+| `DB_DSN` | Connection string for PostgreSQL (e.g., `postgres://user:pass@host:5432/potbuddy?sslmode=disable`). |
+| `PORT` | Listening port for the API and static frontend (Default: `8081`). |
+
+1. Create a `potbuddy-manager.service` file ensuring `DB_DSN` points to your central database.
 2. Upload the `manager-linux` binary to `/opt/potbuddy/manager-api/manager` and the `frontend/dist/` folder adjacent to it.
 3. Install and run the service:
 ```bash

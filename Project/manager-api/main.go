@@ -4,8 +4,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"sync"
+	"time"
 
 	_ "github.com/lib/pq"
 	"github.com/rs/cors"
@@ -61,6 +64,8 @@ func main() {
 	
 	mux.HandleFunc("GET /api/devices", getDevices)
 	mux.HandleFunc("PUT /api/devices/{id}", updateDeviceProfile)
+	
+	mux.HandleFunc("GET /api/infrastructure", getInfrastructureHealth)
 
 	// Serve the React frontend locally if the fallback is activated
 	// Assumes the command runs in a direct path context alongside ./frontend/dist
@@ -221,4 +226,83 @@ func updateDeviceProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(200)
+}
+
+type ServiceHealth struct {
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	Status  string `json:"status"`
+	Address string `json:"address"`
+}
+
+func checkTCP(address string) string {
+	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
+	if err != nil {
+		return "offline"
+	}
+	conn.Close()
+	return "online"
+}
+
+func checkHTTP(url string) string {
+	client := http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil || resp.StatusCode >= 500 {
+		return "offline"
+	}
+	return "online"
+}
+
+func getInfrastructureHealth(w http.ResponseWriter, r *http.Request) {
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	results := []ServiceHealth{}
+
+	targets := []struct {
+		name      string
+		typ       string
+		checkType string
+		addr      string
+	}{
+		{"Manager API", "backend", "always", "localhost:8081"},
+		{"Manager UI", "frontend", "always", "localhost:8081"},
+		{"Database", "postgres", "db", "postgresql.iot.kaminjitt.com:5432"},
+		{"Cloud MQTT Site 0", "mqtt", "tcp", "mqtt-0.iot.kaminjitt.com:1883"},
+		{"Cloud MQTT Site 1", "mqtt", "tcp", "mqtt-1.iot.kaminjitt.com:1883"},
+		{"Prometheus Scraper", "prometheus", "http", "http://prometheus.iot.kaminjitt.com:9090/-/healthy"},
+		{"Grafana Dashboard", "grafana", "http", "http://grafana.iot.kaminjitt.com:3000/api/health"},
+		{"Local Node Site 0", "processor", "http", "http://debian-0.iot.kaminjitt.com:8080/health"},
+		{"Local Node Site 1", "processor", "http", "http://debian-1.iot.kaminjitt.com:8080/health"},
+	}
+
+	for _, t := range targets {
+		wg.Add(1)
+		go func(t struct{ name, typ, checkType, addr string }) {
+			defer wg.Done()
+			status := "offline"
+			switch t.checkType {
+			case "always":
+				status = "online"
+			case "db":
+				if err := DB.Ping(); err == nil {
+					status = "online"
+				}
+			case "tcp":
+				status = checkTCP(t.addr)
+			case "http":
+				status = checkHTTP(t.addr)
+			}
+			
+			// Hide pure HTTP prefixes for display cleanup if requested, but UI can do it too.
+			mu.Lock()
+			results = append(results, ServiceHealth{
+				Name: t.name, Type: t.typ, Status: status, Address: t.addr,
+			})
+			mu.Unlock()
+		}(t)
+	}
+
+	wg.Wait()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
 }

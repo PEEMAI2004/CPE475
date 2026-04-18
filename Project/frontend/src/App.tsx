@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react';
-import { Leaf, Cpu, Save, Plus, Trash2, Edit2 } from 'lucide-react';
+import { Leaf, Cpu, Save, Plus, Trash2, Edit2, Server, Activity } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import type { Profile, Device } from './api';
-import { getProfiles, getDevices, createProfile, updateProfile, deleteProfile, updateDeviceProfile } from './api';
+import type { Profile, Device, ServiceHealth } from './api';
+import { getProfiles, getDevices, createProfile, updateProfile, deleteProfile, updateDeviceProfile, getInfrastructureHealth } from './api';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'devices' | 'profiles'>('devices');
+  const [activeTab, setActiveTab] = useState<'devices' | 'profiles' | 'infrastructure'>('devices');
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
+  const [infra, setInfra] = useState<ServiceHealth[]>([]);
 
   useEffect(() => {
     fetchData();
@@ -17,8 +18,10 @@ function App() {
     try {
       const p = await getProfiles();
       const d = await getDevices();
+      const i = await getInfrastructureHealth();
       setProfiles(p);
       setDevices(d);
+      setInfra(i);
     } catch (e) {
       console.error("Failed to fetch data:", e);
     }
@@ -60,6 +63,13 @@ function App() {
           >
             <Leaf size={16} style={{ display: 'inline', marginRight: 8, verticalAlign: 'middle' }}/>
             Profiles
+          </div>
+          <div 
+            className={`tab ${activeTab === 'infrastructure' ? 'active' : ''}`}
+            onClick={() => setActiveTab('infrastructure')}
+          >
+            <Server size={16} style={{ display: 'inline', marginRight: 8, verticalAlign: 'middle' }}/>
+            Infrastructure
           </div>
         </div>
       </header>
@@ -112,6 +122,42 @@ function App() {
                     </table>
                   </div>
                 )}
+              </div>
+            </motion.div>
+          ) : activeTab === 'infrastructure' ? (
+            <motion.div
+              key="infrastructure"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+            >
+              <div className="glass-panel" style={{ padding: '1.5rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+                  <h2 style={{ fontWeight: 500 }}>System Infrastructure</h2>
+                  <button className="btn" onClick={fetchData}>
+                    <Activity size={18} /> Refresh
+                  </button>
+                </div>
+                <div className="grid">
+                  {infra.map((s, idx) => (
+                    <div key={idx} style={{ background: 'rgba(0,0,0,0.2)', padding: '1.5rem', borderRadius: '12px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                        <h4 style={{ margin: 0, fontWeight: 600 }}>{s.name}</h4>
+                        {s.status === 'online' ? (
+                          <span style={{ color: '#4ade80', fontSize: '0.85rem', fontWeight: 600 }}>● Online</span>
+                        ) : (
+                          <span style={{ color: '#f87171', fontSize: '0.85rem', fontWeight: 600 }}>● Offline</span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-sub)', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
+                        Type: {s.type}
+                      </div>
+                      <div style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {s.address}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </motion.div>
           ) : (

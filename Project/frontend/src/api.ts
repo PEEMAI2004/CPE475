@@ -40,3 +40,12 @@ export const deleteProfile = async (id: number) => await api.delete(`/profiles/$
 
 export const getDevices = async () => (await api.get<Device[]>('/devices')).data;
 export const updateDeviceProfile = async (id: string, profile_id: number) => await api.put(`/devices/${id}`, { profile_id });
+
+export interface ServiceHealth {
+  name: string;
+  type: string;
+  status: string;
+  address: string;
+}
+
+export const getInfrastructureHealth = async () => (await api.get<ServiceHealth[]>('/infrastructure')).data;

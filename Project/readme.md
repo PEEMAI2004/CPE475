@@ -209,14 +209,16 @@ device_id: "esp32wroom-project"
 
 All fields can be overridden with environment variables:
 
-| Env Var | Overrides |
-| :--- | :--- |
-| `LOCAL_BROKER` | `local_mqtt.broker` |
-| `CLOUD_BROKER` | `cloud_mqtt.broker` |
-| `CLOUD_MQTT_USER` | `cloud_mqtt.username` |
-| `CLOUD_MQTT_PASS` | `cloud_mqtt.password` |
-| `DEVICE_ID` | `device_id` |
-| `CONFIG_PATH` | path to config file |
+| Env Var | Overrides | Component |
+| :--- | :--- | :--- |
+| `LOCAL_BROKER` | `local_mqtt.broker` | Local Node |
+| `CLOUD_BROKER` | `cloud_mqtt.broker` | Local Node |
+| `CLOUD_MQTT_USER` | `cloud_mqtt.username` | Local Node |
+| `CLOUD_MQTT_PASS` | `cloud_mqtt.password` | Local Node |
+| `DB_DSN` | `database.dsn` | Local Node / Manager |
+| `DEVICE_ID` | `device_id` | Local Node |
+| `CONFIG_PATH` | path to config file | Local Node |
+| `PORT` | listening port | Manager API |
 
 ---
 
@@ -228,24 +230,22 @@ It includes instructions for both:
 1. **Docker Compose** (for simple local evaluation)
 2. **Multiple-Site Linux Services** (our recommended distributed SSH configuration)
 
-### 3 — Simulate Without Hardware
+### 3 — Simulate Multi-Device Fleet
 
-Once configured and deployed, you can verify your nodes by running the fake ESP32 device simulator:
+Once configured and deployed, you can verify your nodes and dashboard by running the fleet simulator. This mimics three different plants in various environments simultaneously:
 
 ```bash
 cd local-node
 MQTT_BROKER=tcp://mqtt-0.iot.kaminjitt.com:1883 make simulate
 ```
 
-Cycles through 5 test scenarios every 3 seconds:
+**Simulated Hardware Nodes:**
 
-| # | Scenario | Expected Status |
-| :--: | :--- | :---: |
-| 1 | Normal (all sensors healthy) | 🟢 healthy |
-| 2 | Dry soil (soil ADC 3500) | 🔴 critical |
-| 3 | Hot day (temp 32 °C) | 🟡 warning |
-| 4 | Dark (light 100 lux) | 🔴 critical |
-| 5 | DHT error (missing temp + hum) | 🟢 healthy (defaults) |
+| Device ID | Scenario Highlights |
+| :--- | :--- |
+| `plant-living-room` | Cycles between **Normal** 🟢 and **Dry Soil** 🔴. |
+| `plant-balcony` | Cycles through **Bright Sun** 🟡, **Normal**, and **Deep Shade** 🔴. |
+| `plant-bedroom` | Low light environment, includes a **DHT11 Sensor Error** scenario. |
 
 ---
 
@@ -299,6 +299,43 @@ Returns the latest enriched sensor reading.
 Returns the last `n` readings in chronological order (oldest first). Max `n` = 100, default = 20.
 
 **Response `200 OK`:** JSON array of enriched payloads (same schema as `/status`).
+
+---
+
+### `GET /metrics`
+Prometheus scrape endpoint. Exposes real-time gauges for all sensors and health statuses.
+
+**Metrics Exported:**
+- `potbuddy_light_lux`: Ambient light level.
+- `potbuddy_temperature_celsius`: Air temperature.
+- `potbuddy_humidity_percent`: Air humidity.
+- `potbuddy_soil_raw`: Raw soil moisture ADC value.
+- `potbuddy_health_status`: 0=Healthy, 1=Warning, 2=Critical (labels: `device`, `field`).
+- `potbuddy_device_online`: 1 if active, 0 if silent for >30s.
+
+---
+
+## 🏗️ Manager API Reference
+
+Base URL: `http://localhost:8081`
+
+### `GET /api/profiles`
+Returns all logic profiles (thresholds).
+
+### `POST /api/profiles`
+Creates a new threshold profile.
+
+### `PUT /api/profiles/{id}`
+Updates an existing profile.
+
+### `GET /api/devices`
+Returns all discovered devices and their assigned profiles.
+
+### `PUT /api/devices/{id}`
+Binds a device to a specific profile ID.
+
+### `GET /api/infrastructure`
+Returns the connectivity status of all core services (DB, MQTT, Nodes).
 
 ---
 
