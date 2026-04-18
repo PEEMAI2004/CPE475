@@ -1,0 +1,23 @@
+local_mqtt:
+  broker: "tcp://mqtt-1.iot.kaminjitt.com:1883"
+  client_id: "potbuddy-local-node-1"
+  sub_topic: "potbuddy/+/raw"
+  pub_topic: "potbuddy/processed"
+
+cloud_mqtt:
+  broker: "tcp://mqtt-1.iot.kaminjitt.com:1883"
+  client_id: "potbuddy-cloud-publisher-1"
+  pub_topic: "potbuddy/telemetry"
+  username: ""
+  password: ""
+
+http:
+  port: 8080
+
+store:
+  buffer_size: 100
+
+database:
+  dsn: "postgres://postgres:postgres@postgresql.iot.kaminjitt.com:5432/potbuddy?sslmode=disable"
+
+device_id: "site-1-local-node"

@@ -19,29 +19,30 @@
 
 ## 📐 System Architecture
 
+PotBuddy implements a **Multi-Site Edge Architecture**.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                          PotBuddy System                            │
 │                                                                     │
 │  ┌──────────────────┐     MQTT      ┌────────────────────────────┐  │
-│  │   ESP32 Device   │  potbuddy/raw │      Local Node (Go)       │  │
-│  │                  │ ─────────────>│                            │  │
+│  │   ESP32 Device   │  potbuddy/raw │Site-x Edge Processor (Node)│  │
+│  │     (Site 0)     │ ─────────────>│                            │  │
 │  │  • BH1750 Light  │               │  • Subscribe potbuddy/raw  │  │
-│  │  • DHT11 Temp    │               │  • Health pre-processing   │  │
-│  │  • Soil Sensor   │               │  • DB Auto-provisioning    │  │
-│  │  • WiFi MQTT     │               │  • Publish enriched JSON   │  │
+│  │  • DHT11 Temp    │               │  • Apply cached Thresholds │  │
+│  │  • Soil Sensor   │               │  • Export Prometheus Metric│  │
+│  │  • WiFi MQTT     │               │  • Target: debian-0 / 1    │  │
 │  └──────────────────┘               └────────────┬─────────┬─────┘  │
 │                                                  │         │        │
 │                                     ┌────────────▼──────┐  │        │
-│                                     │Manager API & UI Go│  │ MQTT   │
-│                                     │  Port: 8081       │  │        │
+│                                     │ Central Manager   │  │ Prom   │
+│                                     │ API & Web React UI│  │ Scrape │
 │                                     └────────────┬──────┘  │        │
 │                                                  │         │        │
 │                                     ┌────────────▼─────────▼─────┐  │
-│                                     │         Backends           │  │
+│                                     │     Cloud Integrations     │  │
 │                                     │ • PostgreSQL (:5432)       │  │
-│                                     │ • Cloud MQTT               │  │
-│                                     │ • Grafana Cloud Dashboard  │  │
+│                                     │ • Prometheus & Grafana     │  │
 │                                     └────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -221,43 +222,19 @@ All fields can be overridden with environment variables:
 
 ## 🚀 Getting Started
 
-### Prerequisites
+Please see our comprehensive **[Deployment Guide](deployment.md)** to launch the project.
 
-- Go ≥ 1.22
-- Mosquitto MQTT broker running locally
-- Arduino IDE with libraries: `BH1750FVI`, `SimpleDHT`, `PubSubClient`
-
-### 1 — Flash the ESP32
-
-1. Open `Project/Project.ino` in Arduino IDE.
-2. Edit `config.h`: set `WIFI_SSID`, `WIFI_PASSWORD`, and `MQTT_BROKER` to your machine's LAN IP.
-3. Flash to your ESP32-WROOM-32.
-
-### 2 — Run the Local Node
-
-```bash
-cd local-node
-
-# (first time only) download dependencies
-make tidy
-
-# start the service
-make run
-```
-
-Expected output:
-```
-PotBuddy Local Node starting (device: esp32wroom-project)
-[subscriber] connected to tcp://localhost:1883
-[subscriber] subscribed to potbuddy/raw
-[publisher-local] connected to tcp://localhost:1883
-[api] listening on http://localhost:8080
-```
+It includes instructions for both:
+1. **Docker Compose** (for simple local evaluation)
+2. **Multiple-Site Linux Services** (our recommended distributed SSH configuration)
 
 ### 3 — Simulate Without Hardware
 
+Once configured and deployed, you can verify your nodes by running the fake ESP32 device simulator:
+
 ```bash
-make simulate
+cd local-node
+MQTT_BROKER=tcp://mqtt-0.iot.kaminjitt.com:1883 make simulate
 ```
 
 Cycles through 5 test scenarios every 3 seconds:

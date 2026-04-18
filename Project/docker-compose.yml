@@ -1,0 +1,56 @@
+name: potbuddy-local
+
+services:
+  mqtt:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1884:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: potbuddy
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  local-node:
+    build: 
+      context: ./local-node
+      dockerfile: Dockerfile
+    environment:
+      LOCAL_BROKER: "tcp://mqtt:1883"
+      DB_DSN: "postgres://postgres:postgres@postgres:5432/potbuddy?sslmode=disable"
+      DEVICE_ID: "esp32-docker-root-node"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
+
+  manager-api:
+    build:
+      context: .
+      dockerfile: manager-api/Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      DB_DSN: "postgres://postgres:postgres@postgres:5432/potbuddy?sslmode=disable"
+      PORT: "8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

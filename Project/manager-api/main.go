@@ -42,7 +42,7 @@ type Device struct {
 func main() {
 	dsn := os.Getenv("DB_DSN")
 	if dsn == "" {
-		dsn = "postgres://postgres:postgres@10.0.0.66:5432/potbuddy?sslmode=disable"
+		dsn = "postgres://postgres:postgres@postgresql.iot.kaminjitt.com:5432/potbuddy?sslmode=disable"
 	}
 
 	var err error
