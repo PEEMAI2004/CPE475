@@ -40,6 +40,8 @@ type Profile struct {
 type Device struct {
 	DeviceID  string `json:"device_id"`
 	ProfileID int    `json:"profile_id"`
+	Online    bool   `json:"online"`
+	Health    string `json:"health"`
 }
 
 func main() {
@@ -184,7 +186,48 @@ func deleteProfile(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(200)
 }
 
+type PromResponse struct {
+	Data struct {
+		Result []struct {
+			Metric map[string]string `json:"metric"`
+			Value  []interface{}     `json:"value"`
+		} `json:"result"`
+	} `json:"data"`
+}
+
+func fetchPrometheus(query string) map[string]string {
+	result := make(map[string]string)
+	client := http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://prometheus.iot.kaminjitt.com:9090/api/v1/query?query=" + query)
+	if err != nil {
+		return result
+	}
+	defer resp.Body.Close()
+
+	var pResp PromResponse
+	if err := json.NewDecoder(resp.Body).Decode(&pResp); err != nil {
+		return result
+	}
+
+	for _, r := range pResp.Data.Result {
+		dev := r.Metric["device"]
+		if dev == "" {
+			continue
+		}
+		if len(r.Value) == 2 {
+			if valStr, ok := r.Value[1].(string); ok {
+				result[dev] = valStr
+			}
+		}
+	}
+	return result
+}
+
 func getDevices(w http.ResponseWriter, r *http.Request) {
+	onlineMap := fetchPrometheus("potbuddy_device_online")
+	// Using %22 to URL encode quotes since go client might not do it implicitly
+	healthMap := fetchPrometheus("potbuddy_health_status%7Bfield=%22overall%22%7D")
+
 	rows, err := DB.Query("SELECT device_id, profile_id FROM device_profiles ORDER BY device_id")
 	if err != nil {
 		http.Error(w, err.Error(), 500)
@@ -200,6 +243,25 @@ func getDevices(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), 500)
 			return
 		}
+		
+		d.Online = (onlineMap[d.DeviceID] == "1")
+		
+		healthStr := "unknown"
+		if val, exists := healthMap[d.DeviceID]; exists {
+			switch val {
+			case "0":
+				healthStr = "healthy"
+			case "1":
+				healthStr = "warning"
+			case "2":
+				healthStr = "critical"
+			}
+		}
+		if !d.Online {
+			healthStr = "unknown"
+		}
+		d.Health = healthStr
+
 		devices = append(devices, d)
 	}
 

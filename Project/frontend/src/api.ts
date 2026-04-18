@@ -31,6 +31,8 @@ export interface Profile {
 export interface Device {
   device_id: string;
   profile_id: number;
+  online: boolean;
+  health: string;
 }
 
 export const getProfiles = async () => (await api.get<Profile[]>('/profiles')).data;
