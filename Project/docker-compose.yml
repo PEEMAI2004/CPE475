@@ -43,11 +43,15 @@ services:
     build:
       context: .
       dockerfile: manager-api/Dockerfile
+      args:
+        - VITE_GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-your-client-id-here}
     ports:
       - "8081:8081"
     environment:
       DB_DSN: "postgres://postgres:postgres@postgres:5432/potbuddy?sslmode=disable"
       PORT: "8081"
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-keep-it-safe}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-your-client-id-here}
     depends_on:
       postgres:
         condition: service_healthy

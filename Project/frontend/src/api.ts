@@ -7,6 +7,28 @@ export const api = axios.create({
   baseURL: API_URL,
 });
 
+// Add interceptor to inject JWT
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Add interceptor to handle 401 Unauthorized
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      window.location.href = '/'; // Redirect to login
+    }
+    return Promise.reject(error);
+  }
+);
+
 export interface Profile {
   id: number;
   name: string;
@@ -35,6 +57,26 @@ export interface Device {
   health: string;
 }
 
+export interface User {
+  id: number;
+  email: string;
+  name: string;
+  role: string;
+  created_at: string;
+}
+
+export const login = async (idToken: string) => {
+  const resp = await api.post<{ token: string; role: string; name: string }>('/auth/login', { idToken });
+  localStorage.setItem('token', resp.data.token);
+  localStorage.setItem('user', JSON.stringify({ name: resp.data.name, role: resp.data.role }));
+  return resp.data;
+};
+
+export const logout = () => {
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+};
+
 export const getProfiles = async () => (await api.get<Profile[]>('/profiles')).data;
 export const createProfile = async (p: Partial<Profile>) => (await api.post<Profile>('/profiles', p)).data;
 export const updateProfile = async (id: number, p: Partial<Profile>) => await api.put(`/profiles/${id}`, p);
@@ -51,3 +93,8 @@ export interface ServiceHealth {
 }
 
 export const getInfrastructureHealth = async () => (await api.get<ServiceHealth[]>('/infrastructure')).data;
+
+// User Management
+export const getUsers = async () => (await api.get<User[]>('/users')).data;
+export const inviteUser = async (email: string, role: string) => (await api.post<User>('/users', { email, role })).data;
+export const deleteUser = async (id: number) => await api.delete(`/users/${id}`);

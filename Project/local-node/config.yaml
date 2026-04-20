@@ -1,0 +1,23 @@
+local_mqtt:
+  broker: "tcp://mqtt-0.iot.kaminjitt.com:1883"
+  client_id: "potbuddy-local-node-0"
+  sub_topic: "potbuddy/+/raw"
+  pub_topic: "potbuddy/processed"
+
+cloud_mqtt:
+  broker: "tcp://mqtt-0.iot.kaminjitt.com:1883"
+  client_id: "potbuddy-cloud-publisher-0"
+  pub_topic: "potbuddy/telemetry"
+  username: ""
+  password: ""
+
+http:
+  port: 8080
+
+store:
+  buffer_size: 100
+
+database:
+  dsn: "postgres://postgres:postgres@postgresql.iot.kaminjitt.com:5432/potbuddy?sslmode=disable"
+
+device_id: "esp32wroom-project"

@@ -93,3 +93,16 @@ This single command spins up:
 ```bash
 docker compose down -v
 ```
+
+---
+
+## 📈 Scaling: Adding More Site Nodes
+
+PotBuddy is designed to support an unlimited number of physical sites. To add a new Edge Processor (Site Node):
+
+1.  **New Configuration**: Create a new config file (e.g., `local-node/config-2.yaml`) specifying the site's unique local MQTT broker.
+2.  **Edge Deployment**: Deploy the `node` binary to the new site's gateway server as described in **Method A**.
+3.  **Prometheus Integration**: Update the central `prometheus.yml` to include the new node's IP/Hostname in the `targets` list for the `potbuddy-local-node` job.
+4.  **Hardware Alignment**: Ensure the ESP32 devices at the new site are configured to publish to the local broker defined in step 1.
+
+The new node will automatically fetch all existing Plant Health Profiles from the central database upon startup.

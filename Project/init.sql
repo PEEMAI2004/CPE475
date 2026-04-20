@@ -16,6 +16,20 @@ CREATE TABLE device_profiles (
     profile_id INT REFERENCES profiles(id) ON DELETE CASCADE
 );
 
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255),
+    role VARCHAR(50) NOT NULL CHECK (role IN ('Super Admin', 'Site Admin', 'Viewer')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE user_sites (
+    user_id INT REFERENCES users(id) ON DELETE CASCADE,
+    site_id INT NOT NULL, -- Logical site ID (0, 1, etc.)
+    PRIMARY KEY (user_id, site_id)
+);
+
 -- Insert a default baseline profile covering standard plants
 INSERT INTO profiles (name, 
   soil_inner_low, soil_inner_high, soil_outer_low, soil_outer_high,
@@ -29,3 +43,6 @@ INSERT INTO profiles (name,
   40, 70, 30, 80,
   2000, 50000, 500, 80000
 );
+
+-- Note: In production, the first Super Admin should be added via a migration or initial setup script.
+-- For this environment, we'll assume the user will be added via the database or a setup tool.
