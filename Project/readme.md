@@ -19,32 +19,24 @@
 
 ## 📐 System Architecture
 
-PotBuddy implements a **Multi-Site Edge Architecture**.
+PotBuddy implements a **Multi-Site Edge Architecture** with a transition toward **Zero-Trust Security**.
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                          PotBuddy System                            │
-│                                                                     │
-│  ┌──────────────────┐     MQTT      ┌────────────────────────────┐  │
-│  │   ESP32 Device   │  potbuddy/raw │Site-x Edge Processor (Node)│  │
-│  │     (Site 0)     │ ─────────────>│                            │  │
-│  │  • BH1750 Light  │               │  • Subscribe potbuddy/raw  │  │
-│  │  • DHT11 Temp    │               │  • Apply cached Thresholds │  │
-│  │  • Soil Sensor   │               │  • Export Prometheus Metric│  │
-│  │  • WiFi MQTT     │               │  • Target: debian-0 / 1    │  │
-│  └──────────────────┘               └────────────┬─────────┬─────┘  │
-│                                                  │         │        │
-│                                     ┌────────────▼──────┐  │        │
-│                                     │ Central Manager   │  │ Prom   │
-│                                     │ API & Web React UI│  │ Scrape │
-│                                     └────────────┬──────┘  │        │
-│                                                  │         │        │
-│                                     ┌────────────▼─────────▼─────┐  │
-│                                     │     Cloud Integrations     │  │
-│                                     │ • PostgreSQL (:5432)       │  │
-│                                     │ • Prometheus & Grafana     │  │
-│                                     └────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph "Edge Sites (0 to N)"
+        ESP32["<b>ESP32 Device</b><br/>(AuthToken Required)"] -- "MQTT (potbuddy/raw)" --> Node["<b>Edge Processor (Node)</b><br/>(JWT Authenticated)"]
+    end
+
+    Node -- "REST / Config" --> Manager["<b>Central Manager API & Web UI</b><br/>(Google SSO Auth)"]
+    
+    subgraph "Cloud Infrastructure"
+        DB[(PostgreSQL :5432)]
+        Vis["Monitoring (Prometheus/Grafana)"]
+    end
+
+    Manager -- "Identity & Persistence" --> DB
+    Node -- "Metrics Scrape" --> Vis
+    Vis -- "Persistence" --> DB
 ```
 
 ---
@@ -146,6 +138,23 @@ flowchart LR
     SC --> Worst
     Worst --> Msg[Status Message]
 ```
+
+---
+
+## 🔐 Security & Enrollment
+
+PotBuddy is migrating to a **Zero-Trust** model governed by the **Manager Dashboard**.
+
+### 1. Unified Site Enrollment
+Infrastructure is registered as "Edge Sites". The system automatically monitors both the **Local Node Processor** (HTTP) and the **MQTT Broker** (TCP) for each site.
+- **Node Address**: The primary server IP/Domain.
+- **MQTT Address**: Defaults to the Node Address, can be overridden.
+
+### 2. Configuration Deployment
+Once a site is registered, the admin can download a pre-configured `config.yaml`. This file contains the site's unique **NodeToken** used for future authenticated communications.
+
+### 3. ESP32 Enrollment
+Devices are registered via the dashboard to generate a secure **AuthToken**. This token must be entered into the ESP32's **Captive Portal** during the initial WiFi setup.
 
 ---
 
@@ -395,6 +404,9 @@ PASS   ok  internal/processor  8/8
 - [ ] **Physical Prototype**
     - [ ] Case design for "Attachable" feature
     - [ ] Power management (Battery / USB)
+- [ ] **Security Enchancement**
+    - [x] **Phase 1: Core Identity & RBAC** (Google SSO, JWT, Role Management)
+    - [x] **Phase 2: Web Enrollment** (Automated Site & Device registration, Config Download)
 
 ---
 

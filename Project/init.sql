@@ -30,6 +30,21 @@ CREATE TABLE user_sites (
     PRIMARY KEY (user_id, site_id)
 );
 
+CREATE TABLE infrastructure_nodes (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    type VARCHAR(50) NOT NULL CHECK (type IN ('Local Node', 'MQTT Broker')),
+    site_id INT NOT NULL,
+    token VARCHAR(255) UNIQUE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE devices (
+    device_id VARCHAR(50) PRIMARY KEY,
+    auth_token VARCHAR(255) UNIQUE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Insert a default baseline profile covering standard plants
 INSERT INTO profiles (name, 
   soil_inner_low, soil_inner_high, soil_outer_low, soil_outer_high,

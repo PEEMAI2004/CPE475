@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'react';
-import { Leaf, Cpu, Save, Plus, Trash2, Edit2, Server, Activity, Users, LogOut } from 'lucide-react';
+import { Leaf, Cpu, Save, Plus, Trash2, Edit2, Server, Activity, Users, LogOut, ShieldCheck, Key, Eye, EyeOff, Download, BookOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GoogleOAuthProvider, GoogleLogin } from '@react-oauth/google';
-import type { Profile, Device, ServiceHealth, User } from './api';
+import type { Profile, Device, ServiceHealth, User, InfrastructureNode, EnrolledDevice } from './api';
 import { 
   getProfiles, getDevices, createProfile, updateProfile, deleteProfile, 
   updateDeviceProfile, getInfrastructureHealth, login, logout, 
-  getUsers, inviteUser, deleteUser 
+  getUsers, inviteUser, deleteUser,
+  getEnrolledNodes, enrollNode, updateEnrolledNode, deleteEnrolledNode,
+  getEnrolledDevices, enrollDevice, deleteEnrolledDevice,
+  downloadNodeConfig
 } from './api';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -66,7 +69,7 @@ function App() {
 }
 
 function Dashboard({ user, onLogout }: { user: { name: string, role: string }, onLogout: () => void }) {
-  const [activeTab, setActiveTab] = useState<'devices' | 'profiles' | 'infrastructure' | 'users'>('devices');
+  const [activeTab, setActiveTab] = useState<'devices' | 'profiles' | 'infrastructure' | 'users' | 'enrollment'>('devices');
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [infra, setInfra] = useState<ServiceHealth[]>([]);
@@ -123,6 +126,11 @@ function Dashboard({ user, onLogout }: { user: { name: string, role: string }, o
             <div className={`tab ${activeTab === 'infrastructure' ? 'active' : ''}`} onClick={() => setActiveTab('infrastructure')}>
               <Server size={16} /> Infra
             </div>
+            {isAtLeastSiteAdmin && (
+              <div className={`tab ${activeTab === 'enrollment' ? 'active' : ''}`} onClick={() => setActiveTab('enrollment')}>
+                <ShieldCheck size={16} /> Enrollment
+              </div>
+            )}
             {isSuperAdmin && (
               <div className={`tab ${activeTab === 'users' ? 'active' : ''}`} onClick={() => setActiveTab('users')}>
                 <Users size={16} /> Users
@@ -204,6 +212,10 @@ function Dashboard({ user, onLogout }: { user: { name: string, role: string }, o
             <motion.div key="users" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
               <UserManagement users={users} reload={fetchData} />
             </motion.div>
+          ) : activeTab === 'enrollment' ? (
+            <motion.div key="enrollment" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
+              <EnrollmentManagement isSuperAdmin={isSuperAdmin} />
+            </motion.div>
           ) : (
             <motion.div key="profiles" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
               <ProfileManager profiles={profiles} reload={fetchData} canEdit={isAtLeastSiteAdmin} isSuperAdmin={isSuperAdmin} />
@@ -211,6 +223,253 @@ function Dashboard({ user, onLogout }: { user: { name: string, role: string }, o
           )}
         </AnimatePresence>
       </main>
+    </div>
+  );
+}
+
+function EnrollmentManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
+  const [nodes, setNodes] = useState<InfrastructureNode[]>([]);
+  const [devices, setDevices] = useState<EnrolledDevice[]>([]);
+  
+  const [newNode, setNewNode] = useState({ name: '', site_id: 0, address: '', mqtt_address: '' });
+  const [editingNodeId, setEditingNodeId] = useState<number | null>(null);
+  const [newDevice, setNewDevice] = useState({ device_id: '' });
+
+  // Visibility states
+  const [visibleNodes, setVisibleNodes] = useState<Record<number, boolean>>({});
+  const [visibleDevices, setVisibleDevices] = useState<Record<string, boolean>>({});
+  const [showInstructions, setShowInstructions] = useState(false);
+
+  useEffect(() => {
+    fetchEnrollments();
+  }, []);
+
+  const fetchEnrollments = async () => {
+    try {
+      if (isSuperAdmin) setNodes(await getEnrolledNodes());
+      setDevices(await getEnrolledDevices());
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const toggleNodeVisibility = (id: number) => {
+    setVisibleNodes(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const toggleDeviceVisibility = (id: string) => {
+    setVisibleDevices(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const handleEnrollNode = async () => {
+    if (!newNode.name || !newNode.address) return;
+    try {
+      if (editingNodeId !== null) {
+        await updateEnrolledNode(editingNodeId, newNode);
+        setEditingNodeId(null);
+      } else {
+        await enrollNode(newNode.name, 'Local Node', newNode.site_id, newNode.address, newNode.mqtt_address);
+      }
+      setNewNode({ name: '', site_id: 0, address: '', mqtt_address: '' });
+      fetchEnrollments();
+    } catch (e) {
+      alert("Failed to save site.");
+    }
+  };
+
+  const handleEditNode = (node: InfrastructureNode) => {
+    setEditingNodeId(node.id);
+    setNewNode({
+      name: node.name,
+      site_id: node.site_id,
+      address: node.address,
+      mqtt_address: node.mqtt_address || ''
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingNodeId(null);
+    setNewNode({ name: '', site_id: 0, address: '', mqtt_address: '' });
+  };
+
+  const handleEnrollDevice = async () => {
+    if (!newDevice.device_id) return;
+    await enrollDevice(newDevice.device_id);
+    setNewDevice({ device_id: '' });
+    fetchEnrollments();
+  };
+
+  const handleDeleteNode = async (id: number) => {
+    if (confirm('De-enroll this site?')) {
+      await deleteEnrolledNode(id);
+      fetchEnrollments();
+    }
+  };
+
+  const handleDeleteDevice = async (id: string) => {
+    if (confirm('De-enroll this device?')) {
+      await deleteEnrolledDevice(id);
+      fetchEnrollments();
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button className="btn" style={{ background: 'rgba(74, 222, 128, 0.2)', color: '#4ade80' }} onClick={() => setShowInstructions(!showInstructions)}>
+          <BookOpen size={18} /> Enrollment Guide
+        </button>
+      </div>
+
+      <AnimatePresence>
+        {showInstructions && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }} 
+            animate={{ height: 'auto', opacity: 1 }} 
+            exit={{ height: 0, opacity: 0 }}
+            className="glass-panel" 
+            style={{ padding: '1.5rem', overflow: 'hidden', border: '1px solid var(--accent)' }}
+          >
+            <h3 style={{ marginBottom: '1rem', color: 'var(--accent)' }}>Edge Site Enrollment Guide</h3>
+            <ol style={{ paddingLeft: '1.5rem', lineHeight: '1.6', color: 'var(--text-sub)' }}>
+              <li><strong>Register Site:</strong> Fill in the "Infrastructure Enrollment" form below. Use the IP/Domain of the Site Gateway.</li>
+              <li><strong>Download Config:</strong> Once registered, click the <Download size={14} /> button in the table to get your <code>config.yaml</code>.</li>
+              <li><strong>Deploy Site Processor:</strong> 
+                <ul style={{ paddingLeft: '1.5rem', marginTop: '0.5rem' }}>
+                  <li>Transfer <code>config.yaml</code> to the edge server.</li>
+                  <li>The config automatically routes to the site broker (defaulting to the same IP).</li>
+                </ul>
+              </li>
+              <li><strong>Verify:</strong> Check the "Infra" tab. You should see both <strong>Node</strong> and <strong>MQTT</strong> entries for this site.</li>
+            </ol>
+            <h3 style={{ marginTop: '1.5rem', marginBottom: '1rem', color: 'var(--accent)' }}>ESP32 Device Enrollment</h3>
+            <ol style={{ paddingLeft: '1.5rem', lineHeight: '1.6', color: 'var(--text-sub)' }}>
+              <li><strong>Register Device:</strong> Enter a unique ID for your ESP32.</li>
+              <li><strong>Get Token:</strong> Click "Generate Auth Token" and copy the secure token.</li>
+              <li><strong>Flash & Configure:</strong> Use the PotBuddy Captive Portal on the ESP32 to paste this token.</li>
+            </ol>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {isSuperAdmin && (
+        <div className="glass-panel" style={{ padding: '1.5rem' }}>
+          <h2 style={{ marginBottom: '1.5rem', fontWeight: 500 }}>Infrastructure Enrollment</h2>
+          <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '2rem', background: 'rgba(0,0,0,0.2)', padding: '1.5rem', borderRadius: '12px' }}>
+            <div style={{ flex: '1 1 200px' }}>
+              <label style={{ fontSize: '0.8rem', color: 'var(--text-sub)' }}>Site Name</label>
+              <input className="input-field" value={newNode.name} onChange={e => setNewNode({...newNode, name: e.target.value})} placeholder="e.g. Bangkok Warehouse" />
+            </div>
+            <div style={{ width: '100px' }}>
+              <label style={{ fontSize: '0.8rem', color: 'var(--text-sub)' }}>Site ID</label>
+              <input type="number" className="input-field" value={newNode.site_id} onChange={e => setNewNode({...newNode, site_id: Number(e.target.value)})} />
+            </div>
+            <div style={{ flex: '1 1 200px' }}>
+              <label style={{ fontSize: '0.8rem', color: 'var(--text-sub)' }}>Node Address (IP/Domain)</label>
+              <input className="input-field" value={newNode.address} onChange={e => setNewNode({...newNode, address: e.target.value})} placeholder="e.g. debian-0.iot.kaminjitt.com" />
+            </div>
+            <div style={{ flex: '1 1 200px' }}>
+              <label style={{ fontSize: '0.8rem', color: 'var(--text-sub)' }}>MQTT Address (Optional)</label>
+              <input className="input-field" value={newNode.mqtt_address} onChange={e => setNewNode({...newNode, mqtt_address: e.target.value})} placeholder="Fallback to Node Address" />
+            </div>
+            <div style={{ alignSelf: 'flex-end', display: 'flex', gap: '0.5rem' }}>
+              {editingNodeId && <button className="btn" style={{ background: 'rgba(255,255,255,0.1)' }} onClick={cancelEdit}>Cancel</button>}
+              <button className="btn" onClick={handleEnrollNode}>
+                {editingNodeId ? <Save size={18} /> : <Plus size={18} />} 
+                {editingNodeId ? ' Save Changes' : ' Enroll Site'}
+              </button>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Site Name</th>
+                <th>Site ID</th>
+                <th>Node Addr</th>
+                <th>MQTT Addr</th>
+                <th>Token</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {nodes.map(n => (
+                <tr key={n.id}>
+                  <td style={{fontWeight: 600}}>{n.name}</td>
+                  <td>Site {n.site_id}</td>
+                  <td style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{n.address}</td>
+                  <td style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{n.mqtt_address || <span style={{opacity: 0.3}}>(node address)</span>}</td>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
+                        {visibleNodes[n.id] ? n.token : '••••••••••••••••'}
+                      </span>
+                      <button className="btn-icon" onClick={() => toggleNodeVisibility(n.id)} style={{ background: 'none', border: 'none', color: 'var(--text-sub)', cursor: 'pointer', padding: 0 }}>
+                        {visibleNodes[n.id] ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    </div>
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', gap: '0.4rem' }}>
+                      <button className="btn" style={{ padding: '0.4rem', background: 'rgba(255,255,255,0.1)' }} title="Download config.yaml" onClick={() => downloadNodeConfig(n.id)}><Download size={14} /></button>
+                      <button className="btn" style={{ padding: '0.4rem', background: 'rgba(255,255,255,0.1)' }} onClick={() => handleEditNode(n)}><Edit2 size={14} /></button>
+                      <button className="btn danger" style={{ padding: '0.4rem' }} onClick={() => handleDeleteNode(n.id)}><Trash2 size={14} /></button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="glass-panel" style={{ padding: '1.5rem' }}>
+        <h2 style={{ marginBottom: '1.5rem', fontWeight: 500 }}>IoT Device Enrollment (ESP32)</h2>
+        <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', background: 'rgba(0,0,0,0.2)', padding: '1.5rem', borderRadius: '12px' }}>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: '0.8rem', color: 'var(--text-sub)' }}>Device ID (Unique)</label>
+            <input className="input-field" value={newDevice.device_id} onChange={e => setNewDevice({...newDevice, device_id: e.target.value})} placeholder="e.g. living-room-fern" />
+          </div>
+          <div style={{ alignSelf: 'flex-end' }}>
+            <button className="btn" onClick={handleEnrollDevice}><Key size={18} /> Generate Auth Token</button>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Device ID</th>
+              <th>Secure Auth Token (AuthToken)</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {devices.map(d => (
+              <tr key={d.device_id}>
+                <td style={{ fontWeight: 600 }}>{d.device_id}</td>
+                <td>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ fontFamily: 'monospace', color: visibleDevices[d.device_id] ? 'var(--accent)' : 'inherit', fontWeight: 'bold' }}>
+                      {visibleDevices[d.device_id] ? d.auth_token : '••••••••••••••••'}
+                    </span>
+                    <button className="btn-icon" onClick={() => toggleDeviceVisibility(d.device_id)} style={{ background: 'none', border: 'none', color: 'var(--text-sub)', cursor: 'pointer', padding: 0 }}>
+                      {visibleDevices[d.device_id] ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                </td>
+                <td style={{ fontSize: '0.85rem' }}>{new Date(d.created_at).toLocaleString()}</td>
+                <td>
+                  <button className="btn danger" style={{ padding: '0.4rem' }} onClick={() => handleDeleteDevice(d.device_id)}><Trash2 size={14} /></button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p style={{ marginTop: '1rem', fontSize: '0.85rem', color: 'var(--text-sub)' }}>
+          * Copy the <b>AuthToken</b> and use it in the ESP32 Captive Portal during device setup.
+        </p>
+      </div>
     </div>
   );
 }

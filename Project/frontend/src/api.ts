@@ -65,6 +65,23 @@ export interface User {
   created_at: string;
 }
 
+export interface InfrastructureNode {
+  id: number;
+  name: string;
+  type: string;
+  site_id: number;
+  address: string;
+  mqtt_address: string;
+  token: string;
+  created_at: string;
+}
+
+export interface EnrolledDevice {
+  device_id: string;
+  auth_token: string;
+  created_at: string;
+}
+
 export const login = async (idToken: string) => {
   const resp = await api.post<{ token: string; role: string; name: string }>('/auth/login', { idToken });
   localStorage.setItem('token', resp.data.token);
@@ -98,3 +115,24 @@ export const getInfrastructureHealth = async () => (await api.get<ServiceHealth[
 export const getUsers = async () => (await api.get<User[]>('/users')).data;
 export const inviteUser = async (email: string, role: string) => (await api.post<User>('/users', { email, role })).data;
 export const deleteUser = async (id: number) => await api.delete(`/users/${id}`);
+
+// Phase 2: Enrollment
+export const getEnrolledNodes = async () => (await api.get<InfrastructureNode[]>('/enrollment/nodes')).data;
+export const enrollNode = async (name: string, type: string, site_id: number, address: string, mqtt_address: string) => (await api.post<InfrastructureNode>('/enrollment/nodes', { name, type, site_id, address, mqtt_address })).data;
+export const updateEnrolledNode = async (id: number, n: Partial<InfrastructureNode>) => await api.put(`/enrollment/nodes/${id}`, n);
+export const deleteEnrolledNode = async (id: number) => await api.delete(`/enrollment/nodes/${id}`);
+
+export const getEnrolledDevices = async () => (await api.get<EnrolledDevice[]>('/enrollment/devices')).data;
+export const enrollDevice = async (device_id: string) => (await api.post<EnrolledDevice>('/enrollment/devices', { device_id })).data;
+export const deleteEnrolledDevice = async (id: string) => await api.delete(`/enrollment/devices/${id}`);
+
+export const downloadNodeConfig = async (id: number) => {
+  const response = await api.get(`/enrollment/nodes/${id}/config`, { responseType: 'blob' });
+  const url = window.URL.createObjectURL(new Blob([response.data]));
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', `node-${id}-config.yaml`);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+};

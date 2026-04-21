@@ -1,20 +1,31 @@
 package main
 
 import (
+	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	_ "github.com/lib/pq"
 	"github.com/rs/cors"
+	"google.golang.org/api/idtoken"
 )
 
-var DB *sql.DB
+var (
+	DB             *sql.DB
+	JWTSecret      = []byte(os.Getenv("JWT_SECRET"))
+	GoogleClientID = os.Getenv("GOOGLE_CLIENT_ID")
+)
 
 type Profile struct {
 	ID             int      `json:"id"`
@@ -44,7 +55,42 @@ type Device struct {
 	Health    string `json:"health"`
 }
 
+type User struct {
+	ID        int       `json:"id"`
+	Email     string    `json:"email"`
+	Name      string    `json:"name"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type InfrastructureNode struct {
+	ID          int       `json:"id"`
+	Name        string    `json:"name"`
+	Type        string    `json:"type"` // Kept for DB compatibility, but defaults to "Local Node"
+	SiteID      int       `json:"site_id"`
+	Address     string    `json:"address"`
+	MQTTAddress string    `json:"mqtt_address"`
+	Token       string    `json:"token"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type EnrolledDevice struct {
+	DeviceID  string    `json:"device_id"`
+	AuthToken string    `json:"auth_token"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Claims struct {
+	Email string `json:"email"`
+	Role  string `json:"role"`
+	jwt.RegisteredClaims
+}
+
 func main() {
+	if len(JWTSecret) == 0 {
+		JWTSecret = []byte("dev-secret-keep-it-safe")
+	}
+
 	dsn := os.Getenv("DB_DSN")
 	if dsn == "" {
 		dsn = "postgres://postgres:postgres@postgresql.iot.kaminjitt.com:5432/potbuddy?sslmode=disable"
@@ -58,24 +104,49 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// API Routes
-	mux.HandleFunc("GET /api/profiles", getProfiles)
-	mux.HandleFunc("POST /api/profiles", createProfile)
-	mux.HandleFunc("PUT /api/profiles/{id}", updateProfile)
-	mux.HandleFunc("DELETE /api/profiles/{id}", deleteProfile)
-	
-	mux.HandleFunc("GET /api/devices", getDevices)
-	mux.HandleFunc("PUT /api/devices/{id}", updateDeviceProfile)
-	
-	mux.HandleFunc("GET /api/infrastructure", getInfrastructureHealth)
+	// Public Routes
+	mux.HandleFunc("POST /api/auth/login", loginHandler)
 
-	// Serve the React frontend locally if the fallback is activated
-	// Assumes the command runs in a direct path context alongside ./frontend/dist
+	// Protected API Routes
+	mux.Handle("GET /api/profiles", authMiddleware(http.HandlerFunc(getProfiles)))
+	mux.Handle("POST /api/profiles", authMiddleware(roleMiddleware([]string{"Super Admin", "Site Admin"}, http.HandlerFunc(createProfile))))
+	mux.Handle("PUT /api/profiles/{id}", authMiddleware(roleMiddleware([]string{"Super Admin", "Site Admin"}, http.HandlerFunc(updateProfile))))
+	mux.Handle("DELETE /api/profiles/{id}", authMiddleware(roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(deleteProfile))))
+	
+	mux.Handle("GET /api/devices", authMiddleware(http.HandlerFunc(getDevices)))
+	mux.Handle("PUT /api/devices/{id}", authMiddleware(roleMiddleware([]string{"Super Admin", "Site Admin"}, http.HandlerFunc(updateDeviceProfile))))
+	
+	mux.Handle("GET /api/infrastructure", authMiddleware(http.HandlerFunc(getInfrastructureHealth)))
+
+	// Phase 2: Enrollment (Infrastructure)
+	mux.Handle("GET /api/enrollment/nodes", authMiddleware(roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(getEnrolledNodes))))
+	mux.Handle("POST /api/enrollment/nodes", authMiddleware(roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(enrollNode))))
+	mux.Handle("PUT /api/enrollment/nodes/{id}", authMiddleware(roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(updateEnrolledNode))))
+	mux.Handle("DELETE /api/enrollment/nodes/{id}", authMiddleware(roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(deleteEnrolledNode))))
+
+	// Phase 2: Enrollment (Devices)
+	mux.Handle("GET /api/enrollment/devices", authMiddleware(roleMiddleware([]string{"Super Admin", "Site Admin"}, http.HandlerFunc(getEnrolledDevices))))
+	mux.Handle("POST /api/enrollment/devices", authMiddleware(roleMiddleware([]string{"Super Admin", "Site Admin"}, http.HandlerFunc(enrollDevice))))
+	mux.Handle("DELETE /api/enrollment/devices/{id}", authMiddleware(roleMiddleware([]string{"Super Admin", "Site Admin"}, http.HandlerFunc(deleteEnrolledDevice))))
+
+	mux.Handle("GET /api/enrollment/nodes/{id}/config", authMiddleware(roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(downloadNodeConfig))))
+
+	// User Management (Super Admin only)
+	mux.Handle("GET /api/users", authMiddleware(roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(getUsers))))
+	mux.Handle("POST /api/users", authMiddleware(roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(inviteUser))))
+	mux.Handle("DELETE /api/users/{id}", authMiddleware(roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(deleteUser))))
+
+	// Serve the React frontend
 	fs := http.FileServer(http.Dir("./frontend/dist"))
 	mux.Handle("/", http.StripPrefix("/", fs))
 
-	// Allow all origins for dev testing
-	c := cors.AllowAll()
+	// CORS
+	c := cors.New(cors.Options{
+		AllowedOrigins:   []string{"*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type"},
+		AllowCredentials: true,
+	})
 	handler := c.Handler(mux)
 
 	port := os.Getenv("PORT")
@@ -85,6 +156,338 @@ func main() {
 
 	log.Printf("Manager API listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, handler))
+}
+
+// Utils
+func generateToken(length int) string {
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
+}
+
+// Middleware
+func authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
+			return
+		}
+
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			http.Error(w, "Invalid Authorization header format", http.StatusUnauthorized)
+			return
+		}
+
+		tokenString := parts[1]
+		claims := &Claims{}
+
+		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+			return JWTSecret, nil
+		})
+
+		if err != nil || !token.Valid {
+			http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+			return
+		}
+
+		// Pass claims to context
+		ctx := context.WithValue(r.Context(), "user", claims)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func roleMiddleware(allowedRoles []string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, ok := r.Context().Value("user").(*Claims)
+		if !ok {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		isAllowed := false
+		for _, role := range allowedRoles {
+			if user.Role == role {
+				isAllowed = true
+				break
+			}
+		}
+
+		if !isAllowed {
+			http.Error(w, "Forbidden: insufficient permissions", http.StatusForbidden)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// Handlers
+func loginHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		IDToken string `json:"idToken"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if GoogleClientID == "" {
+		log.Println("WARNING: GOOGLE_CLIENT_ID is not set. Skipping verification for dev.")
+	} else {
+		payload, err := idtoken.Validate(r.Context(), req.IDToken, GoogleClientID)
+		if err != nil {
+			http.Error(w, "Invalid ID token", http.StatusUnauthorized)
+			return
+		}
+		_ = payload
+	}
+
+	payload, err := idtoken.ParsePayload(req.IDToken)
+	if err != nil {
+		http.Error(w, "Failed to parse token", http.StatusUnauthorized)
+		return
+	}
+	email := payload.Claims["email"].(string)
+	name := payload.Claims["name"].(string)
+
+	var user User
+	err = DB.QueryRow("SELECT id, email, name, role FROM users WHERE email = $1", email).
+		Scan(&user.ID, &user.Email, &user.Name, &user.Role)
+
+	if err == sql.ErrNoRows {
+		http.Error(w, "User not invited", http.StatusForbidden)
+		return
+	} else if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Issue JWT
+	expirationTime := time.Now().Add(24 * time.Hour)
+	claims := &Claims{
+		Email: user.Email,
+		Role:  user.Role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(JWTSecret)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Update name if it changed
+	DB.Exec("UPDATE users SET name = $1 WHERE email = $2", name, email)
+
+	json.NewEncoder(w).Encode(map[string]string{
+		"token": tokenString,
+		"role":  user.Role,
+		"name":  name,
+	})
+}
+
+// Phase 2: Infrastructure Enrollment Handlers
+func getEnrolledNodes(w http.ResponseWriter, r *http.Request) {
+	rows, err := DB.Query("SELECT id, name, type, site_id, address, mqtt_address, token, created_at FROM infrastructure_nodes ORDER BY id")
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	defer rows.Close()
+
+	var nodes []InfrastructureNode
+	for rows.Next() {
+		var n InfrastructureNode
+		var addr, mqttAddr sql.NullString
+		if err := rows.Scan(&n.ID, &n.Name, &n.Type, &n.SiteID, &addr, &mqttAddr, &n.Token, &n.CreatedAt); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		n.Address = addr.String
+		n.MQTTAddress = mqttAddr.String
+		nodes = append(nodes, n)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if nodes == nil {
+		nodes = []InfrastructureNode{}
+	}
+	json.NewEncoder(w).Encode(nodes)
+}
+
+func enrollNode(w http.ResponseWriter, r *http.Request) {
+	var n InfrastructureNode
+	if err := json.NewDecoder(r.Body).Decode(&n); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	n.Token = "pb_node_" + generateToken(16)
+	if n.Type == "" {
+		n.Type = "Local Node"
+	}
+
+	err := DB.QueryRow("INSERT INTO infrastructure_nodes (name, type, site_id, address, mqtt_address, token) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at", 
+		n.Name, n.Type, n.SiteID, n.Address, n.MQTTAddress, n.Token).Scan(&n.ID, &n.CreatedAt)
+	
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(n)
+}
+
+func updateEnrolledNode(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var n InfrastructureNode
+	if err := json.NewDecoder(r.Body).Decode(&n); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	_, err := DB.Exec("UPDATE infrastructure_nodes SET name=$1, site_id=$2, address=$3, mqtt_address=$4 WHERE id=$5", 
+		n.Name, n.SiteID, n.Address, n.MQTTAddress, id)
+	
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.WriteHeader(200)
+}
+
+func deleteEnrolledNode(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	_, err := DB.Exec("DELETE FROM infrastructure_nodes WHERE id=$1", id)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.WriteHeader(200)
+}
+
+// Phase 2: Device Enrollment Handlers
+func getEnrolledDevices(w http.ResponseWriter, r *http.Request) {
+	rows, err := DB.Query("SELECT device_id, auth_token, created_at FROM devices ORDER BY created_at DESC")
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	defer rows.Close()
+
+	var devices []EnrolledDevice
+	for rows.Next() {
+		var d EnrolledDevice
+		if err := rows.Scan(&d.DeviceID, &d.AuthToken, &d.CreatedAt); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		devices = append(devices, d)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if devices == nil {
+		devices = []EnrolledDevice{}
+	}
+	json.NewEncoder(w).Encode(devices)
+}
+
+func enrollDevice(w http.ResponseWriter, r *http.Request) {
+	var d EnrolledDevice
+	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	if d.DeviceID == "" {
+		http.Error(w, "device_id is required", 400)
+		return
+	}
+
+	d.AuthToken = "pb_dev_" + generateToken(16)
+
+	err := DB.QueryRow("INSERT INTO devices (device_id, auth_token) VALUES ($1, $2) RETURNING created_at", 
+		d.DeviceID, d.AuthToken).Scan(&d.CreatedAt)
+	
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(d)
+}
+
+func deleteEnrolledDevice(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	_, err := DB.Exec("DELETE FROM devices WHERE device_id=$1", id)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.WriteHeader(200)
+}
+
+func getUsers(w http.ResponseWriter, r *http.Request) {
+	rows, err := DB.Query("SELECT id, email, name, role, created_at FROM users ORDER BY id")
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var u User
+		var name sql.NullString
+		if err := rows.Scan(&u.ID, &u.Email, &name, &u.Role, &u.CreatedAt); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		u.Name = name.String
+		users = append(users, u)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if users == nil {
+		users = []User{}
+	}
+	json.NewEncoder(w).Encode(users)
+}
+
+func inviteUser(w http.ResponseWriter, r *http.Request) {
+	var u User
+	if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	err := DB.QueryRow("INSERT INTO users (email, role) VALUES ($1, $2) RETURNING id", u.Email, u.Role).Scan(&u.ID)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(u)
+}
+
+func deleteUser(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	_, err := DB.Exec("DELETE FROM users WHERE id=$1", id)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.WriteHeader(200)
 }
 
 func getProfiles(w http.ResponseWriter, r *http.Request) {
@@ -225,7 +628,6 @@ func fetchPrometheus(query string) map[string]string {
 
 func getDevices(w http.ResponseWriter, r *http.Request) {
 	onlineMap := fetchPrometheus("potbuddy_device_online")
-	// Using %22 to URL encode quotes since go client might not do it implicitly
 	healthMap := fetchPrometheus("potbuddy_health_status%7Bfield=%22overall%22%7D")
 
 	rows, err := DB.Query("SELECT device_id, profile_id FROM device_profiles ORDER BY device_id")
@@ -298,6 +700,13 @@ type ServiceHealth struct {
 }
 
 func checkTCP(address string) string {
+	if address == "" {
+		return "offline"
+	}
+	// Add default port if missing
+	if !strings.Contains(address, ":") {
+		address = address + ":1883" // Default MQTT port
+	}
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
 		return "offline"
@@ -307,6 +716,12 @@ func checkTCP(address string) string {
 }
 
 func checkHTTP(url string) string {
+	if url == "" {
+		return "offline"
+	}
+	if !strings.HasPrefix(url, "http") {
+		url = "http://" + url + ":8080/health" // Default Local Node health endpoint
+	}
 	client := http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil || resp.StatusCode >= 500 {
@@ -320,7 +735,8 @@ func getInfrastructureHealth(w http.ResponseWriter, r *http.Request) {
 	var mu sync.Mutex
 	results := []ServiceHealth{}
 
-	targets := []struct {
+	// Core Components
+	coreTargets := []struct {
 		name      string
 		typ       string
 		checkType string
@@ -329,15 +745,11 @@ func getInfrastructureHealth(w http.ResponseWriter, r *http.Request) {
 		{"Manager API", "backend", "always", "localhost:8081"},
 		{"Manager UI", "frontend", "always", "localhost:8081"},
 		{"Database", "postgres", "db", "postgresql.iot.kaminjitt.com:5432"},
-		{"Cloud MQTT Site 0", "mqtt", "tcp", "mqtt-0.iot.kaminjitt.com:1883"},
-		{"Cloud MQTT Site 1", "mqtt", "tcp", "mqtt-1.iot.kaminjitt.com:1883"},
-		{"Prometheus Scraper", "prometheus", "http", "http://prometheus.iot.kaminjitt.com:9090/-/healthy"},
-		{"Grafana Dashboard", "grafana", "http", "http://grafana.iot.kaminjitt.com:3000/api/health"},
-		{"Local Node Site 0", "processor", "http", "http://debian-0.iot.kaminjitt.com:8080/health"},
-		{"Local Node Site 1", "processor", "http", "http://debian-1.iot.kaminjitt.com:8080/health"},
+		{"Prometheus Scraper", "prometheus", "http-raw", "http://prometheus.iot.kaminjitt.com:9090/-/healthy"},
+		{"Grafana Dashboard", "grafana", "http-raw", "http://grafana.iot.kaminjitt.com:3000/api/health"},
 	}
 
-	for _, t := range targets {
+	for _, t := range coreTargets {
 		wg.Add(1)
 		go func(t struct{ name, typ, checkType, addr string }) {
 			defer wg.Done()
@@ -349,22 +761,133 @@ func getInfrastructureHealth(w http.ResponseWriter, r *http.Request) {
 				if err := DB.Ping(); err == nil {
 					status = "online"
 				}
-			case "tcp":
-				status = checkTCP(t.addr)
-			case "http":
-				status = checkHTTP(t.addr)
+			case "http-raw":
+				client := http.Client{Timeout: 2 * time.Second}
+				resp, err := client.Get(t.addr)
+				if err == nil && resp.StatusCode < 500 {
+					status = "online"
+				}
 			}
-			
-			// Hide pure HTTP prefixes for display cleanup if requested, but UI can do it too.
 			mu.Lock()
-			results = append(results, ServiceHealth{
-				Name: t.name, Type: t.typ, Status: status, Address: t.addr,
-			})
+			results = append(results, ServiceHealth{Name: t.name, Type: t.typ, Status: status, Address: t.addr})
 			mu.Unlock()
 		}(t)
+	}
+
+	// Dynamic Site Nodes (Automatically tracks Node + Broker)
+	rows, err := DB.Query("SELECT name, site_id, address, mqtt_address FROM infrastructure_nodes")
+	if err == nil {
+		for rows.Next() {
+			var n struct {
+				name     string
+				mqttAddr sql.NullString
+				addr     string
+				site_id  int
+			}
+			if err := rows.Scan(&n.name, &n.site_id, &n.addr, &n.mqttAddr); err != nil {
+				continue
+			}
+
+			// 1. Track the Local Node Processor
+			wg.Add(1)
+			go func(name, addr string) {
+				defer wg.Done()
+				status := checkHTTP(addr)
+				mu.Lock()
+				results = append(results, ServiceHealth{Name: name + " (Node)", Type: "Local Node", Status: status, Address: addr})
+				mu.Unlock()
+			}(n.name, n.addr)
+
+			// 2. Track the Site MQTT Broker
+			wg.Add(1)
+			go func(name, addr, mqttAddr string, site_id int) {
+				defer wg.Done()
+				finalMQTTAddr := mqttAddr
+				if finalMQTTAddr == "" {
+					finalMQTTAddr = addr
+				}
+				status := checkTCP(finalMQTTAddr + ":1883")
+				mu.Lock()
+				results = append(results, ServiceHealth{
+					Name:    name + " (MQTT)",
+					Type:    "mqtt",
+					Status:  status,
+					Address: finalMQTTAddr + ":1883",
+				})
+				mu.Unlock()
+			}(n.name, n.addr, n.mqttAddr.String, n.site_id)
+		}
+		rows.Close()
 	}
 
 	wg.Wait()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)
+}
+
+func downloadNodeConfig(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var n InfrastructureNode
+	var addr, mqttAddr sql.NullString
+
+	err := DB.QueryRow("SELECT id, name, type, site_id, address, mqtt_address, token FROM infrastructure_nodes WHERE id = $1", id).
+		Scan(&n.ID, &n.Name, &n.Type, &n.SiteID, &addr, &mqttAddr, &n.Token)
+
+	if err == sql.ErrNoRows {
+		http.Error(w, "Node not found", 404)
+		return
+	} else if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	n.Address = addr.String
+	n.MQTTAddress = mqttAddr.String
+
+	// Use Node Address for MQTT if not specified
+	mqttBroker := n.MQTTAddress
+	if mqttBroker == "" {
+		mqttBroker = n.Address
+	}
+	if !strings.HasPrefix(mqttBroker, "tcp://") {
+		mqttBroker = "tcp://" + mqttBroker + ":1883"
+	}
+
+	// Token suffix (after pb_node_)
+	tokenSuffix := n.Token
+	if strings.HasPrefix(tokenSuffix, "pb_node_") {
+		tokenSuffix = tokenSuffix[8:]
+	}
+	if len(tokenSuffix) > 8 {
+		tokenSuffix = tokenSuffix[:8]
+	}
+
+	// Generate YAML
+	configYaml := fmt.Sprintf(`local_mqtt:
+  broker: %q
+  client_id: "potbuddy-local-node-%d"
+  sub_topic: "potbuddy/+/raw"
+  pub_topic: "potbuddy/processed"
+
+cloud_mqtt:
+  broker: "tcp://mqtt-0.iot.kaminjitt.com:1883"
+  client_id: "potbuddy-cloud-publisher-%d"
+  pub_topic: "potbuddy/telemetry"
+  username: ""
+  password: ""
+
+http:
+  port: 8080
+
+store:
+  buffer_size: 100
+
+database:
+  dsn: "postgres://postgres:postgres@postgresql.iot.kaminjitt.com:5432/potbuddy?sslmode=disable"
+
+device_id: "node-%d-%s"
+`, mqttBroker, n.ID, n.ID, n.ID, tokenSuffix)
+
+	w.Header().Set("Content-Type", "application/x-yaml")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"node-%d-config.yaml\"", n.ID))
+	w.Write([]byte(configYaml))
 }
