@@ -25,6 +25,7 @@ var (
 	DB             *sql.DB
 	JWTSecret      = []byte(os.Getenv("JWT_SECRET"))
 	GoogleClientID = os.Getenv("GOOGLE_CLIENT_ID")
+	CAInstance     *CA
 )
 
 type Profile struct {
@@ -91,12 +92,18 @@ func main() {
 		JWTSecret = []byte("dev-secret-keep-it-safe")
 	}
 
+	// Initialize CA
+	var err error
+	CAInstance, err = LoadOrCreateCA("certs/ca.crt", "certs/ca.key")
+	if err != nil {
+		log.Fatalf("Failed to initialize CA: %v", err)
+	}
+
 	dsn := os.Getenv("DB_DSN")
 	if dsn == "" {
 		dsn = "postgres://postgres:postgres@postgresql.iot.kaminjitt.com:5432/potbuddy?sslmode=disable"
 	}
 
-	var err error
 	DB, err = sql.Open("postgres", dsn)
 	if err != nil {
 		log.Fatal(err)
@@ -128,6 +135,9 @@ func main() {
 	mux.Handle("GET /api/enrollment/devices", authMiddleware(roleMiddleware([]string{"Super Admin", "Site Admin"}, http.HandlerFunc(getEnrolledDevices))))
 	mux.Handle("POST /api/enrollment/devices", authMiddleware(roleMiddleware([]string{"Super Admin", "Site Admin"}, http.HandlerFunc(enrollDevice))))
 	mux.Handle("DELETE /api/enrollment/devices/{id}", authMiddleware(roleMiddleware([]string{"Super Admin", "Site Admin"}, http.HandlerFunc(deleteEnrolledDevice))))
+
+	// Phase 4: Bootstrapping (Public endpoint, secured by AuthToken)
+	mux.HandleFunc("POST /api/enrollment/bootstrap", bootstrapDevice)
 
 	mux.Handle("GET /api/enrollment/nodes/{id}/config", authMiddleware(roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(downloadNodeConfig))))
 
@@ -422,8 +432,23 @@ func enrollDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// mTLS Certificate Generation for ESP32
+	certPEM, keyPEM, err := CAInstance.SignCertificate(d.DeviceID)
+	if err != nil {
+		http.Error(w, "Failed to sign certificate: "+err.Error(), 500)
+		return
+	}
+
+	bundle := map[string]string{
+		"device_id":  d.DeviceID,
+		"auth_token": d.AuthToken,
+		"ca.crt":     string(CAInstance.CertPEM),
+		"client.crt": string(certPEM),
+		"client.key": string(keyPEM),
+	}
+
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(d)
+	json.NewEncoder(w).Encode(bundle)
 }
 
 func deleteEnrolledDevice(w http.ResponseWriter, r *http.Request) {
@@ -434,6 +459,43 @@ func deleteEnrolledDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(200)
+}
+
+func bootstrapDevice(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AuthToken string `json:"auth_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", 400)
+		return
+	}
+
+	var deviceID string
+	err := DB.QueryRow("SELECT device_id FROM devices WHERE auth_token = $1", req.AuthToken).Scan(&deviceID)
+	if err == sql.ErrNoRows {
+		http.Error(w, "Invalid AuthToken", http.StatusUnauthorized)
+		return
+	} else if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	// Generate mTLS Certificate for the device
+	certPEM, keyPEM, err := CAInstance.SignCertificate(deviceID)
+	if err != nil {
+		http.Error(w, "Failed to sign certificate: "+err.Error(), 500)
+		return
+	}
+
+	bundle := map[string]string{
+		"device_id":  deviceID,
+		"ca.crt":     string(CAInstance.CertPEM),
+		"client.crt": string(certPEM),
+		"client.key": string(keyPEM),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(bundle)
 }
 
 func getUsers(w http.ResponseWriter, r *http.Request) {
@@ -848,9 +910,6 @@ func downloadNodeConfig(w http.ResponseWriter, r *http.Request) {
 	if mqttBroker == "" {
 		mqttBroker = n.Address
 	}
-	if !strings.HasPrefix(mqttBroker, "tcp://") {
-		mqttBroker = "tcp://" + mqttBroker + ":1883"
-	}
 
 	// Token suffix (after pb_node_)
 	tokenSuffix := n.Token
@@ -861,12 +920,38 @@ func downloadNodeConfig(w http.ResponseWriter, r *http.Request) {
 		tokenSuffix = tokenSuffix[:8]
 	}
 
+	// mTLS Configuration
+	commonName := fmt.Sprintf("node-%d-%s", n.ID, tokenSuffix)
+	certPEM, keyPEM, err := CAInstance.SignCertificate(commonName)
+	if err != nil {
+		http.Error(w, "Failed to sign certificate: "+err.Error(), 500)
+		return
+	}
+
+	// Use port 8883 for mTLS
+	mqttBrokerTLS := mqttBroker
+	if !strings.Contains(mqttBrokerTLS, ":") {
+		mqttBrokerTLS = mqttBrokerTLS + ":8883"
+	} else {
+		mqttBrokerTLS = strings.Replace(mqttBrokerTLS, ":1883", ":8883", 1)
+		if !strings.Contains(mqttBrokerTLS, ":8883") && !strings.Contains(mqttBrokerTLS, ":1883") {
+			// If it has a port but not 1883, we might need to be careful, but let's assume standard.
+		}
+	}
+
+	if !strings.HasPrefix(mqttBrokerTLS, "ssl://") && !strings.HasPrefix(mqttBrokerTLS, "tcps://") {
+		mqttBrokerTLS = "ssl://" + mqttBrokerTLS
+	}
+
 	// Generate YAML
 	configYaml := fmt.Sprintf(`local_mqtt:
   broker: %q
   client_id: "potbuddy-local-node-%d"
   sub_topic: "potbuddy/+/raw"
   pub_topic: "potbuddy/processed"
+  ca_file: "ca.crt"
+  cert_file: "client.crt"
+  key_file: "client.key"
 
 cloud_mqtt:
   broker: "tcp://mqtt-0.iot.kaminjitt.com:1883"
@@ -884,10 +969,16 @@ store:
 database:
   dsn: "postgres://postgres:postgres@postgresql.iot.kaminjitt.com:5432/potbuddy?sslmode=disable"
 
-device_id: "node-%d-%s"
-`, mqttBroker, n.ID, n.ID, n.ID, tokenSuffix)
+device_id: %q
+`, mqttBrokerTLS, n.ID, n.ID, commonName)
 
-	w.Header().Set("Content-Type", "application/x-yaml")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"node-%d-config.yaml\"", n.ID))
-	w.Write([]byte(configYaml))
+	bundle := map[string]string{
+		"config.yaml": configYaml,
+		"ca.crt":      string(CAInstance.CertPEM),
+		"client.crt":  string(certPEM),
+		"client.key":  string(keyPEM),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(bundle)
 }
