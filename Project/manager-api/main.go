@@ -92,11 +92,16 @@ func main() {
 		JWTSecret = []byte("dev-secret-keep-it-safe")
 	}
 
-	// Initialize CA
-	var err error
-	CAInstance, err = LoadOrCreateCA("certs/ca.crt", "certs/ca.key")
-	if err != nil {
-		log.Fatalf("Failed to initialize CA: %v", err)
+	// Initialize CA (Optional)
+	if os.Getenv("ENABLE_CA") == "true" || os.Getenv("ENABLE_CA") == "1" {
+		var err error
+		CAInstance, err = LoadOrCreateCA("certs/ca.crt", "certs/ca.key")
+		if err != nil {
+			log.Fatalf("Failed to initialize CA: %v", err)
+		}
+		log.Println("CA initialized successfully.")
+	} else {
+		log.Println("CA is disabled. mTLS certificate signing will be unavailable.")
 	}
 
 	dsn := os.Getenv("DB_DSN")
@@ -104,6 +109,7 @@ func main() {
 		dsn = "postgres://postgres:postgres@postgresql.iot.kaminjitt.com:5432/potbuddy?sslmode=disable"
 	}
 
+	var err error
 	DB, err = sql.Open("postgres", dsn)
 	if err != nil {
 		log.Fatal(err)
@@ -339,6 +345,11 @@ func enrollNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if n.Name == "" || n.Address == "" {
+		http.Error(w, "name and address are required", 400)
+		return
+	}
+
 	n.Token = "pb_node_" + generateToken(16)
 	if n.Type == "" {
 		n.Type = "Local Node"
@@ -432,19 +443,21 @@ func enrollDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// mTLS Certificate Generation for ESP32
-	certPEM, keyPEM, err := CAInstance.SignCertificate(d.DeviceID)
-	if err != nil {
-		http.Error(w, "Failed to sign certificate: "+err.Error(), 500)
-		return
-	}
-
+	// mTLS Certificate Generation for ESP32 (Optional)
 	bundle := map[string]string{
 		"device_id":  d.DeviceID,
 		"auth_token": d.AuthToken,
-		"ca.crt":     string(CAInstance.CertPEM),
-		"client.crt": string(certPEM),
-		"client.key": string(keyPEM),
+	}
+
+	if CAInstance != nil {
+		certPEM, keyPEM, err := CAInstance.SignCertificate(d.DeviceID)
+		if err != nil {
+			http.Error(w, "Failed to sign certificate: "+err.Error(), 500)
+			return
+		}
+		bundle["ca.crt"] = string(CAInstance.CertPEM)
+		bundle["client.crt"] = string(certPEM)
+		bundle["client.key"] = string(keyPEM)
 	}
 
 	w.WriteHeader(http.StatusCreated)
@@ -477,6 +490,11 @@ func bootstrapDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if err != nil {
 		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	if CAInstance == nil {
+		http.Error(w, "CA is disabled on this server", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -922,25 +940,35 @@ func downloadNodeConfig(w http.ResponseWriter, r *http.Request) {
 
 	// mTLS Configuration
 	commonName := fmt.Sprintf("node-%d-%s", n.ID, tokenSuffix)
-	certPEM, keyPEM, err := CAInstance.SignCertificate(commonName)
-	if err != nil {
-		http.Error(w, "Failed to sign certificate: "+err.Error(), 500)
-		return
-	}
-
-	// Use port 8883 for mTLS
 	mqttBrokerTLS := mqttBroker
-	if !strings.Contains(mqttBrokerTLS, ":") {
-		mqttBrokerTLS = mqttBrokerTLS + ":8883"
-	} else {
-		mqttBrokerTLS = strings.Replace(mqttBrokerTLS, ":1883", ":8883", 1)
-		if !strings.Contains(mqttBrokerTLS, ":8883") && !strings.Contains(mqttBrokerTLS, ":1883") {
-			// If it has a port but not 1883, we might need to be careful, but let's assume standard.
-		}
-	}
+	var certPEM, keyPEM []byte
 
-	if !strings.HasPrefix(mqttBrokerTLS, "ssl://") && !strings.HasPrefix(mqttBrokerTLS, "tcps://") {
-		mqttBrokerTLS = "ssl://" + mqttBrokerTLS
+	if CAInstance != nil {
+		var err error
+		certPEM, keyPEM, err = CAInstance.SignCertificate(commonName)
+		if err != nil {
+			http.Error(w, "Failed to sign certificate: "+err.Error(), 500)
+			return
+		}
+
+		// Use port 8883 for mTLS
+		if !strings.Contains(mqttBrokerTLS, ":") {
+			mqttBrokerTLS = mqttBrokerTLS + ":8883"
+		} else {
+			mqttBrokerTLS = strings.Replace(mqttBrokerTLS, ":1883", ":8883", 1)
+		}
+
+		if !strings.HasPrefix(mqttBrokerTLS, "ssl://") && !strings.HasPrefix(mqttBrokerTLS, "tcps://") {
+			mqttBrokerTLS = "ssl://" + mqttBrokerTLS
+		}
+	} else {
+		// Fallback to non-TLS if CA is disabled
+		if !strings.HasPrefix(mqttBrokerTLS, "tcp://") {
+			mqttBrokerTLS = "tcp://" + mqttBrokerTLS
+		}
+		if !strings.Contains(mqttBrokerTLS, ":") {
+			mqttBrokerTLS = mqttBrokerTLS + ":1883"
+		}
 	}
 
 	// Generate YAML
@@ -974,9 +1002,11 @@ device_id: %q
 
 	bundle := map[string]string{
 		"config.yaml": configYaml,
-		"ca.crt":      string(CAInstance.CertPEM),
-		"client.crt":  string(certPEM),
-		"client.key":  string(keyPEM),
+	}
+	if CAInstance != nil {
+		bundle["ca.crt"] = string(CAInstance.CertPEM)
+		bundle["client.crt"] = string(certPEM)
+		bundle["client.key"] = string(keyPEM)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
