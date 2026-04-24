@@ -24,25 +24,9 @@ type Subscriber struct {
 // NewSubscriber creates a Subscriber connected to the local MQTT broker.
 // Messages from sub_topic are sent to msgCh.
 func NewSubscriber(cfg config.MQTTConfig, msgCh chan<- Message) (*Subscriber, error) {
-	opts := pahomqtt.NewClientOptions().
-		AddBroker(cfg.Broker).
-		SetClientID(cfg.ClientID + "-sub").
-		SetCleanSession(true).
-		SetAutoReconnect(true).
-		SetOnConnectHandler(func(c pahomqtt.Client) {
-			log.Printf("[subscriber] connected to %s", cfg.Broker)
-		}).
-		SetConnectionLostHandler(func(c pahomqtt.Client, err error) {
-			log.Printf("[subscriber] connection lost: %v", err)
-		})
-
-	if cfg.Username != "" {
-		opts.SetUsername(cfg.Username).SetPassword(cfg.Password)
-	}
-
-	client := pahomqtt.NewClient(opts)
-	if tok := client.Connect(); tok.Wait() && tok.Error() != nil {
-		return nil, fmt.Errorf("subscriber: connect: %w", tok.Error())
+	client, err := createClient(cfg, "subscriber")
+	if err != nil {
+		return nil, err
 	}
 
 	s := &Subscriber{client: client, topic: cfg.SubTopic}

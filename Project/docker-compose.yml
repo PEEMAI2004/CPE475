@@ -5,8 +5,10 @@ services:
     image: eclipse-mosquitto:2
     ports:
       - "1884:1883"
+      - "8883:8883"
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./certs:/mosquitto/config
 
   postgres:
     image: postgres:17-alpine
@@ -33,6 +35,7 @@ services:
       LOCAL_BROKER: "tcp://mqtt:1883"
       DB_DSN: "postgres://postgres:postgres@postgres:5432/potbuddy?sslmode=disable"
       DEVICE_ID: "esp32-docker-root-node"
+      VALIDATE_DEVICE_ID: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,6 +55,8 @@ services:
       PORT: "8081"
       JWT_SECRET: ${JWT_SECRET:-dev-secret-keep-it-safe}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-your-client-id-here}
+    volumes:
+      - ./certs:/opt/potbuddy/manager-api/certs
     depends_on:
       postgres:
         condition: service_healthy

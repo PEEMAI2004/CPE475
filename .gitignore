@@ -140,3 +140,22 @@ config.h
 
 # Handoff Context
 Project/handoff_context.md
+
+# PotBuddy Specific
+Project/certs/
+Project/manager-api/manager
+Project/local-node/bin/
+Project/local-node/config-*.yaml
+*.crt
+*.key
+*.csr
+*.srl
+*.pem
+*.json-bundle
+bundle_*.json
+enroll_resp.json
+bootstrap_resp.json
+Project/.env
+Project/manager-api/.env
+Project/frontend/dist/
+node_modules/

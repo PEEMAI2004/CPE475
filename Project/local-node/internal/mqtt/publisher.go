@@ -19,34 +19,10 @@ type Publisher struct {
 	cloudEnabled bool
 }
 
-func newClient(cfg config.MQTTConfig, suffix string) (pahomqtt.Client, error) {
-	opts := pahomqtt.NewClientOptions().
-		AddBroker(cfg.Broker).
-		SetClientID(cfg.ClientID + "-" + suffix).
-		SetCleanSession(true).
-		SetAutoReconnect(true).
-		SetOnConnectHandler(func(c pahomqtt.Client) {
-			log.Printf("[publisher-%s] connected to %s", suffix, cfg.Broker)
-		}).
-		SetConnectionLostHandler(func(c pahomqtt.Client, err error) {
-			log.Printf("[publisher-%s] connection lost: %v", suffix, err)
-		})
-
-	if cfg.Username != "" {
-		opts.SetUsername(cfg.Username).SetPassword(cfg.Password)
-	}
-
-	client := pahomqtt.NewClient(opts)
-	if tok := client.Connect(); tok.Wait() && tok.Error() != nil {
-		return nil, fmt.Errorf("publisher-%s: connect to %s: %w", suffix, cfg.Broker, tok.Error())
-	}
-	return client, nil
-}
-
 // NewPublisher creates a Publisher that can publish to both local and cloud brokers.
 // Cloud publishing is skipped (but not fatal) if the cloud broker is unreachable.
 func NewPublisher(localCfg, cloudCfg config.MQTTConfig) (*Publisher, error) {
-	localClient, err := newClient(localCfg, "local")
+	localClient, err := createClient(localCfg, "publisher-local")
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +35,7 @@ func NewPublisher(localCfg, cloudCfg config.MQTTConfig) (*Publisher, error) {
 	}
 
 	// Cloud connection is best-effort — log a warning but keep running.
-	cloudClient, err := newClient(cloudCfg, "cloud")
+	cloudClient, err := createClient(cloudCfg, "publisher-cloud")
 	if err != nil {
 		log.Printf("[publisher] WARNING: cloud broker unavailable: %v — will retry on reconnect", err)
 	} else {

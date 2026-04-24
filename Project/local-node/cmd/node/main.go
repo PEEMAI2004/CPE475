@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -70,25 +71,44 @@ func main() {
 	go func() {
 		for msg := range msgCh {
 			// Extract device_id from topic: potbuddy/{device_id}/raw
-			deviceID := cfg.DeviceID
+			topicDeviceID := ""
 			parts := strings.Split(msg.Topic, "/")
 			if len(parts) >= 2 {
-				deviceID = parts[1]
+				topicDeviceID = parts[1]
+			}
+
+			if topicDeviceID == "" {
+				log.Printf("[processor] warning: could not extract device_id from topic %q", msg.Topic)
+				continue
+			}
+
+			// Validate payload identity against topic (mapped from cert CN by broker)
+			if cfg.ValidateDeviceID {
+				var payload struct {
+					DeviceID string `json:"device_id"`
+				}
+				if err := json.Unmarshal(msg.Payload, &payload); err == nil {
+					if payload.DeviceID != "" && payload.DeviceID != topicDeviceID {
+						log.Printf("[processor] SECURITY ALERT: payload device_id %q does not match cert CN (topic) %q - DROPPING", payload.DeviceID, topicDeviceID)
+						continue
+					}
+				}
 			}
 
 			// Auto-register new devices into database
-			db.RegisterDevice(deviceID)
+			db.RegisterDevice(topicDeviceID)
 
 			reading, err := processor.Parse(msg.Payload)
 			if err != nil {
 				log.Printf("[processor] parse error: %v", err)
 				continue
 			}
-			enriched := processor.Enrich(reading, deviceID)
+			enriched := processor.Enrich(reading, topicDeviceID)
 			rb.Push(enriched)
 			metrics.Update(enriched)
 
-			log.Printf("[processor] status=%s  light=%.0f temp=%.0f hum=%.0f soil=%.0f",
+			log.Printf("[processor] device=%s status=%s  light=%.0f temp=%.0f hum=%.0f soil=%.0f",
+				topicDeviceID,
 				enriched.Status.Overall,
 				derefOr(enriched.Raw.Light, -1),
 				derefOr(enriched.Raw.Temp, -1),

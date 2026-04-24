@@ -9,12 +9,13 @@ import (
 
 // Config holds all runtime configuration for the local node.
 type Config struct {
-	LocalMQTT MQTTConfig `yaml:"local_mqtt"`
-	CloudMQTT MQTTConfig `yaml:"cloud_mqtt"`
-	HTTP      HTTPConfig `yaml:"http"`
-	Store     StoreConfig `yaml:"store"`
-	Database  DBConfig    `yaml:"database"`
-	DeviceID  string      `yaml:"device_id"`
+	LocalMQTT        MQTTConfig `yaml:"local_mqtt"`
+	CloudMQTT        MQTTConfig `yaml:"cloud_mqtt"`
+	HTTP             HTTPConfig `yaml:"http"`
+	Store            StoreConfig `yaml:"store"`
+	Database         DBConfig    `yaml:"database"`
+	DeviceID         string      `yaml:"device_id"`
+	ValidateDeviceID bool        `yaml:"validate_device_id"`
 }
 
 // MQTTConfig holds connection settings for an MQTT broker.
@@ -25,6 +26,9 @@ type MQTTConfig struct {
 	PubTopic string `yaml:"pub_topic"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
+	CAFile   string `yaml:"ca_file"`
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
 }
 
 // HTTPConfig holds settings for the local HTTP API server.
@@ -60,6 +64,15 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("LOCAL_BROKER"); v != "" {
 		cfg.LocalMQTT.Broker = v
 	}
+	if v := os.Getenv("LOCAL_CA_FILE"); v != "" {
+		cfg.LocalMQTT.CAFile = v
+	}
+	if v := os.Getenv("LOCAL_CERT_FILE"); v != "" {
+		cfg.LocalMQTT.CertFile = v
+	}
+	if v := os.Getenv("LOCAL_KEY_FILE"); v != "" {
+		cfg.LocalMQTT.KeyFile = v
+	}
 	if v := os.Getenv("CLOUD_BROKER"); v != "" {
 		cfg.CloudMQTT.Broker = v
 	}
@@ -74,6 +87,9 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("DEVICE_ID"); v != "" {
 		cfg.DeviceID = v
+	}
+	if v := os.Getenv("VALIDATE_DEVICE_ID"); v != "" {
+		cfg.ValidateDeviceID = (v == "true" || v == "1")
 	}
 
 	return &cfg, nil

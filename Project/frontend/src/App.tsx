@@ -294,9 +294,25 @@ function EnrollmentManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
 
   const handleEnrollDevice = async () => {
     if (!newDevice.device_id) return;
-    await enrollDevice(newDevice.device_id);
-    setNewDevice({ device_id: '' });
-    fetchEnrollments();
+    try {
+      const bundle = await enrollDevice(newDevice.device_id);
+      
+      // Automatically download the bundle
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `device-${newDevice.device_id}-bundle.json`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      setNewDevice({ device_id: '' });
+      fetchEnrollments();
+      alert("Device enrolled! Certificate bundle downloaded.");
+    } catch (e) {
+      alert("Failed to enroll device.");
+    }
   };
 
   const handleDeleteNode = async (id: number) => {
@@ -342,11 +358,11 @@ function EnrollmentManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
               </li>
               <li><strong>Verify:</strong> Check the "Infra" tab. You should see both <strong>Node</strong> and <strong>MQTT</strong> entries for this site.</li>
             </ol>
-            <h3 style={{ marginTop: '1.5rem', marginBottom: '1rem', color: 'var(--accent)' }}>ESP32 Device Enrollment</h3>
+            <h3 style={{ marginTop: '1.5rem', marginBottom: '1rem', color: 'var(--accent)' }}>ESP32 Device Enrollment (mTLS)</h3>
             <ol style={{ paddingLeft: '1.5rem', lineHeight: '1.6', color: 'var(--text-sub)' }}>
               <li><strong>Register Device:</strong> Enter a unique ID for your ESP32.</li>
-              <li><strong>Get Token:</strong> Click "Generate Auth Token" and copy the secure token.</li>
-              <li><strong>Flash & Configure:</strong> Use the PotBuddy Captive Portal on the ESP32 to paste this token.</li>
+              <li><strong>Download Bundle:</strong> Click "Enroll & Download Bundle". This JSON file contains your <b>Certificate</b>, <b>Private Key</b>, and <b>Root CA</b>.</li>
+              <li><strong>Provision:</strong> Use the PotBuddy Provisioning tool (or Captive Portal in Phase 4) to upload this bundle to your device.</li>
             </ol>
           </motion.div>
         )}
@@ -439,7 +455,8 @@ function EnrollmentManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
           <thead>
             <tr>
               <th>Device ID</th>
-              <th>Secure Auth Token (AuthToken)</th>
+              <th>Auth Token</th>
+              <th>Security</th>
               <th>Created</th>
               <th>Actions</th>
             </tr>
@@ -450,7 +467,7 @@ function EnrollmentManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
                 <td style={{ fontWeight: 600 }}>{d.device_id}</td>
                 <td>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ fontFamily: 'monospace', color: visibleDevices[d.device_id] ? 'var(--accent)' : 'inherit', fontWeight: 'bold' }}>
+                    <span style={{ fontFamily: 'monospace', color: visibleDevices[d.device_id] ? 'var(--accent)' : 'inherit' }}>
                       {visibleDevices[d.device_id] ? d.auth_token : '••••••••••••••••'}
                     </span>
                     <button className="btn-icon" onClick={() => toggleDeviceVisibility(d.device_id)} style={{ background: 'none', border: 'none', color: 'var(--text-sub)', cursor: 'pointer', padding: 0 }}>
@@ -458,6 +475,7 @@ function EnrollmentManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
                     </button>
                   </div>
                 </td>
+                <td><span className="badge" style={{background: 'rgba(74, 222, 128, 0.1)', color: '#4ade80', border: '1px solid rgba(74, 222, 128, 0.2)'}}>mTLS</span></td>
                 <td style={{ fontSize: '0.85rem' }}>{new Date(d.created_at).toLocaleString()}</td>
                 <td>
                   <button className="btn danger" style={{ padding: '0.4rem' }} onClick={() => handleDeleteDevice(d.device_id)}><Trash2 size={14} /></button>

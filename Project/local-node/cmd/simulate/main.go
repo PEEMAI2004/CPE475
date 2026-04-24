@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -60,18 +62,56 @@ var deviceProfiles = []struct {
 	},
 }
 
-func connectDevice(broker, deviceID string) pahomqtt.Client {
+func connectDevice(broker, deviceID string, tlsConfig *tls.Config) pahomqtt.Client {
 	opts := pahomqtt.NewClientOptions().
 		AddBroker(broker).
 		SetClientID(clientIDPrefix + "-" + deviceID).
 		SetCleanSession(true).
 		SetAutoReconnect(true)
 
+	if tlsConfig != nil {
+		opts.SetTLSConfig(tlsConfig)
+	}
+
 	client := pahomqtt.NewClient(opts)
 	if tok := client.Connect(); tok.Wait() && tok.Error() != nil {
 		log.Fatalf("simulate: connect %s: %v", deviceID, tok.Error())
 	}
 	return client
+}
+
+func getTLSConfig() *tls.Config {
+	caFile := os.Getenv("MQTT_CA_FILE")
+	certFile := os.Getenv("MQTT_CERT_FILE")
+	keyFile := os.Getenv("MQTT_KEY_FILE")
+
+	if caFile == "" && certFile == "" && keyFile == "" {
+		return nil
+	}
+
+	cfg := &tls.Config{}
+
+	if caFile != "" {
+		caCert, err := os.ReadFile(caFile)
+		if err != nil {
+			log.Fatalf("simulate: read ca file: %v", err)
+		}
+		caCertPool := x509.NewCertPool()
+		caCertPool.AppendCertsFromPEM(caCert)
+		cfg.RootCAs = caCertPool
+	}
+
+	if certFile != "" && keyFile != "" {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			log.Fatalf("simulate: load key pair: %v", err)
+		}
+		cfg.Certificates = []tls.Certificate{cert}
+	}
+
+	cfg.InsecureSkipVerify = true // Skip hostname check for localhost dev
+
+	return cfg
 }
 
 func main() {
@@ -85,6 +125,8 @@ func main() {
 		topic = "potbuddy"
 	}
 
+	tlsConfig := getTLSConfig()
+
 	log.Printf("Simulator starting — broker: %s", broker)
 
 	devices := make([]*simDevice, 0, len(deviceProfiles))
@@ -93,7 +135,7 @@ func main() {
 			id:    p.id,
 			cases: p.cases,
 		}
-		d.client = connectDevice(broker, p.id)
+		d.client = connectDevice(broker, p.id, tlsConfig)
 		devices = append(devices, d)
 		log.Printf("  [%s] connected", p.id)
 	}

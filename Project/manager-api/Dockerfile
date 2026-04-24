@@ -14,7 +14,7 @@ WORKDIR /app/manager-api
 COPY manager-api/go.mod manager-api/go.sum ./
 RUN go mod download
 COPY manager-api/ .
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o manager main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o manager .
 
 # Stage 3: Final Runner 
 FROM alpine:latest

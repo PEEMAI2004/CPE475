@@ -82,6 +82,14 @@ export interface EnrolledDevice {
   created_at: string;
 }
 
+export interface DeviceEnrollmentBundle {
+  device_id: string;
+  auth_token: string;
+  "ca.crt": string;
+  "client.crt": string;
+  "client.key": string;
+}
+
 export const login = async (idToken: string) => {
   const resp = await api.post<{ token: string; role: string; name: string }>('/auth/login', { idToken });
   localStorage.setItem('token', resp.data.token);
@@ -123,7 +131,7 @@ export const updateEnrolledNode = async (id: number, n: Partial<InfrastructureNo
 export const deleteEnrolledNode = async (id: number) => await api.delete(`/enrollment/nodes/${id}`);
 
 export const getEnrolledDevices = async () => (await api.get<EnrolledDevice[]>('/enrollment/devices')).data;
-export const enrollDevice = async (device_id: string) => (await api.post<EnrolledDevice>('/enrollment/devices', { device_id })).data;
+export const enrollDevice = async (device_id: string) => (await api.post<DeviceEnrollmentBundle>('/enrollment/devices', { device_id })).data;
 export const deleteEnrolledDevice = async (id: string) => await api.delete(`/enrollment/devices/${id}`);
 
 export const downloadNodeConfig = async (id: number) => {
