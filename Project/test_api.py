@@ -2,8 +2,8 @@ import requests
 import time
 import pytest
 
-BASE_URL = "http://manager.iot.kaminjitt.com:8081/api"
-TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6ImthbWluLmppdHRAbWFpbC5rbXV0dC5hYy50aCIsInJvbGUiOiJTdXBlciBBZG1pbiIsImV4cCI6MTc3NzA5MTQxMn0.CcXvNfQBRkbWwk1We1ccBkCdtKtAdhqUe--g8gYkpRY"
+BASE_URL = "http://localhost:8081/api"
+TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6ImthbWluLmppdHRAbWFpbC5rbXV0dC5hYy50aCIsInJvbGUiOiJTdXBlciBBZG1pbiIsImV4cCI6MTc3NzIxOTIzM30.vfMJny_h_Queeo9W805hKPa5f3Zu4DhB6zgaC0VKnFY"
 
 @pytest.fixture
 def api_headers():

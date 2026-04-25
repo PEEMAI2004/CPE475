@@ -31,6 +31,8 @@ services:
     build: 
       context: ./local-node
       dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
     environment:
       LOCAL_BROKER: "tcp://mqtt:1883"
       DB_DSN: "postgres://postgres:postgres@postgres:5432/potbuddy?sslmode=disable"

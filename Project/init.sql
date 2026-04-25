@@ -35,6 +35,8 @@ CREATE TABLE infrastructure_nodes (
     name VARCHAR(255) NOT NULL,
     type VARCHAR(50) NOT NULL CHECK (type IN ('Local Node', 'MQTT Broker')),
     site_id INT NOT NULL,
+    address VARCHAR(255),
+    mqtt_address VARCHAR(255),
     token VARCHAR(255) UNIQUE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

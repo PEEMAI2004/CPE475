@@ -5,8 +5,8 @@ import subprocess
 import json
 
 # Configuration
-BASE_URL = "http://manager.iot.kaminjitt.com:8081/api"
-TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6ImthbWluLmppdHRAbWFpbC5rbXV0dC5hYy50aCIsInJvbGUiOiJTdXBlciBBZG1pbiIsImV4cCI6MTc3NzA5MTQxMn0.CcXvNfQBRkbWwk1We1ccBkCdtKtAdhqUe--g8gYkpRY"
+BASE_URL = "http://localhost:8081/api"
+TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6ImthbWluLmppdHRAbWFpbC5rbXV0dC5hYy50aCIsInJvbGUiOiJTdXBlciBBZG1pbiIsImV4cCI6MTc3NzIxOTIzM30.vfMJny_h_Queeo9W805hKPa5f3Zu4DhB6zgaC0VKnFY"
 MQTT_HOST = "localhost" # Testing against local forward or internal bridge
 MQTT_PORT = 1884        # Standard port for easy automation (non-mTLS for logic testing)
 
@@ -15,15 +15,15 @@ headers = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json
 import paho.mqtt.publish as publish
 
 def run_mqtt_pub(device_id, payload):
-    """Simulates an ESP32 publishing via direct network connection to the remote site broker"""
+    """Simulates an ESP32 publishing via direct network connection to the local site broker"""
     topic = f"potbuddy/{device_id}/raw"
     msg = json.dumps(payload)
-    # Connect directly to the remote broker on the standard port
+    # Connect directly to the local broker on the mapped port
     publish.single(
         topic, 
         payload=msg, 
-        hostname="mqtt-0.iot.kaminjitt.com", 
-        port=1883
+        hostname="localhost", 
+        port=1884
     )
 
 def test_sit_auto_registration():
@@ -44,7 +44,7 @@ def test_sit_auto_registration():
 def test_sit_health_grading_flow():
     """TC-EVAL-01, 02: End-to-End logic check from MQTT to Local Node API"""
     dev_id = "logic-test-esp32"
-    NODE_API = "http://debian-0.iot.kaminjitt.com:8080/history"
+    NODE_API = "http://localhost:8080/history"
     
     # 1. Send Healthy Data
     run_mqtt_pub(dev_id, {"light": 5000, "temp": 25, "hum": 50, "soil": 2000})
@@ -71,7 +71,7 @@ def test_sit_health_grading_flow():
 def test_sit_identity_spoof_detection():
     """TC-VAL-02: Verify that mismatched payload IDs are caught"""
     dev_id = "spoof-monitor"
-    NODE_API = "http://debian-0.iot.kaminjitt.com:8080/history"
+    NODE_API = "http://localhost:8080/history"
     
     # 1. Send legitimate data
     run_mqtt_pub(dev_id, {"device_id": dev_id, "soil": 2000})
