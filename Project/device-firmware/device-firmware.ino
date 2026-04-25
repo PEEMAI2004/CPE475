@@ -9,22 +9,15 @@
 #include <BH1750FVI.h>
 #include <SimpleDHT.h>
 #include <time.h>
+#include "config.h"
 
 // --- BH1750 Settings ---
-const int SDA_PIN = 21;
-const int SCL_PIN = 22;
-uint8_t ADDRESSPIN = 13; 
 BH1750FVI::eDeviceAddress_t DEVICEADDRESS = BH1750FVI::k_DevAddress_L; 
 BH1750FVI::eDeviceMode_t DEVICEMODE = BH1750FVI::k_DevModeContHighRes;
-BH1750FVI LightSensor(ADDRESSPIN, DEVICEADDRESS, DEVICEMODE);
+BH1750FVI LightSensor(BH1750_ADDR_PIN, DEVICEADDRESS, DEVICEMODE);
 
 // --- DHT11 Settings ---
-int pinDHT11 = 27; 
-SimpleDHT11 dht11(pinDHT11);
-
-// --- Soil Moisture Settings ---
-const int SOIL_PIN = 36;
-const int RESET_BUTTON_PIN = 0; // BOOT button on ESP32 DevKit V1
+SimpleDHT11 dht11(DHT11_PIN);
 
 WiFiClientSecure secureClient;
 PubSubClient mqttClient(secureClient);
@@ -32,17 +25,16 @@ PubSubClient mqttClient(secureClient);
 String device_id = "";
 String manager_host = "";
 String mqtt_host = "";
-int bootstrap_port = 8081;
-int mqtt_port = 8883;
+int bootstrap_port = String(DEFAULT_BOOTSTRAP_PORT).toInt();
+int mqtt_port = String(DEFAULT_MQTT_PORT).toInt();
 String ca_crt = "";
 String client_crt = "";
 String client_key = "";
 
 unsigned long lastMsg = 0;
-const unsigned long TELEMETRY_FREQUENCY_MS = 5000;
 
 void syncTime() {
-  configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+  configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER_1, NTP_SERVER_2);
   Serial.print("Waiting for NTP time sync: ");
   time_t now = time(nullptr);
   while (now < 8 * 3600 * 2) {
@@ -165,7 +157,7 @@ void checkResetButton() {
     unsigned long holdStart = millis();
     Serial.println("Reset button pressed. Keep holding for 5 seconds to reset...");
     while (digitalRead(RESET_BUTTON_PIN) == LOW) {
-      if (millis() - holdStart > 5000) {
+      if (millis() - holdStart > RESET_HOLD_TIME_MS) {
         handleManualReset();
       }
       delay(100);
@@ -186,10 +178,10 @@ void setup() {
   WiFiManager wm;
   
   if (!isConfigured) {
-    WiFiManagerParameter custom_host("host", "Manager Host (URL or IP)", "manager.iot.kaminjitt.com", 60);
-    WiFiManagerParameter custom_b_port("b_port", "Bootstrap Port (8081/443)", "8081", 6);
+    WiFiManagerParameter custom_host("host", "Manager Host (URL or IP)", DEFAULT_MANAGER_HOST, 60);
+    WiFiManagerParameter custom_b_port("b_port", "Bootstrap Port (8081/443)", DEFAULT_BOOTSTRAP_PORT, 6);
     WiFiManagerParameter custom_mqtt_host("mqtt_host", "MQTT Host (Empty = Manager)", "", 60);
-    WiFiManagerParameter custom_m_port("m_port", "MQTT mTLS Port", "8883", 6);
+    WiFiManagerParameter custom_m_port("m_port", "MQTT mTLS Port", DEFAULT_MQTT_PORT, 6);
     WiFiManagerParameter custom_token("token", "Device Auth Token", "", 64);
     
     wm.addParameter(&custom_host);
@@ -198,7 +190,7 @@ void setup() {
     wm.addParameter(&custom_m_port);
     wm.addParameter(&custom_token);
     
-    if (!wm.autoConnect("PotBuddy-Setup")) { delay(3000); ESP.restart(); }
+    if (!wm.autoConnect(WIFI_SETUP_AP_NAME)) { delay(3000); ESP.restart(); }
     
     String host_val = custom_host.getValue();
     int b_port = String(custom_b_port.getValue()).toInt();
@@ -213,7 +205,7 @@ void setup() {
       }
     }
   } else {
-    if (!wm.autoConnect("PotBuddy-Setup")) { delay(3000); ESP.restart(); }
+    if (!wm.autoConnect(WIFI_SETUP_AP_NAME)) { delay(3000); ESP.restart(); }
   }
   
   syncTime(); // Required for mTLS certificate validation
@@ -226,7 +218,7 @@ void setup() {
   secureClient.setPrivateKey(client_key.c_str());
   
   mqttClient.setServer(target_mqtt.c_str(), mqtt_port);
-  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   LightSensor.begin();  
   pinMode(SOIL_PIN, INPUT);
   Serial.println("Secure Telemetry Ready!");
@@ -254,7 +246,7 @@ void loop() {
   mqttClient.loop();
 
   unsigned long now = millis();
-  if (now - lastMsg > TELEMETRY_FREQUENCY_MS) {
+  if (now - lastMsg > TELEMETRY_INTERVAL_MS) {
     lastMsg = now;
     uint16_t lux = LightSensor.GetLightIntensity();
     byte temperature = 0, humidity = 0;
