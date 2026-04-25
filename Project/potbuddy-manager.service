@@ -9,6 +9,7 @@ ExecStart=/opt/potbuddy/manager-api/manager
 Restart=always
 RestartSec=5s
 Environment=PORT=8081
+Environment=ENABLE_CA=true
 Environment=DB_DSN=postgres://postgres:postgres@postgresql.iot.kaminjitt.com:5432/potbuddy?sslmode=disable
 
 [Install]

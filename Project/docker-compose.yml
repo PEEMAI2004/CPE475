@@ -55,6 +55,7 @@ services:
       PORT: "8081"
       JWT_SECRET: ${JWT_SECRET:-dev-secret-keep-it-safe}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-your-client-id-here}
+      ENABLE_CA: "true"
     volumes:
       - ./certs:/opt/potbuddy/manager-api/certs
     depends_on:

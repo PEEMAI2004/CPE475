@@ -24,7 +24,7 @@ PotBuddy implements a **Zero-Trust Multi-Site Edge Architecture** using Mutual T
 ```mermaid
 graph TD
     subgraph "Edge Sites (0 to N)"
-        ESP32["<b>ESP32 Device</b><br/>(mTLS Identity)"] <-->|MQTT :8883| Broker["<b>Mosquitto</b><br/>(Verifies CA)"]
+        ESP32["<b>ESP32 Device</b><br/>(mTLS Identity)"] <-->|MQTT :8883/8884| Broker["<b>Mosquitto</b><br/>(Verifies CA)"]
         Node["<b>Edge Processor</b><br/>(mTLS Client)"] <-->|MQTT :8883| Broker
     end
 
@@ -42,27 +42,93 @@ graph TD
 
 ---
 
-## 📊 Data Flow (Zero-Trust)
+## 🔐 Zero-Trust mTLS Implementation
+
+PotBuddy ensures security by treating every component as a potential threat until proven otherwise via cryptographic identity.
+
+### 📊 Secure Bootstrapping & Operation Flow
 
 ```mermaid
 sequenceDiagram
-    participant ESP as ESP32 Device
-    participant Broker as Mosquitto (mTLS)
-    participant Node as Local Node
+    participant Admin as Admin (Web UI)
     participant Manager as Manager API (CA)
+    participant ESP as ESP32 Device
+    participant NTP as NTP Server
+    participant Broker as Mosquitto (mTLS)
+    participant Node as Local Node (Processor)
 
-    Note over ESP, Manager: Bootstrapping Phase
-    ESP->>Manager: POST /bootstrap {AuthToken}
-    Manager-->>ESP: Return mTLS Bundle (Certs)
-    
-    Note over ESP, Broker: Operation Phase (mTLS)
-    ESP->>Broker: Connect with Cert (Port 8883)
-    Broker->>Broker: Validate Cert against CA
-    ESP->>Broker: Publish potbuddy/raw JSON
-    Broker->>Node: Deliver to Subscriber
-    Node->>Node: Validate Payload Identity
-    Node->>Broker: Publish processed telemetry
+    Note over Admin, ESP: 1. Provisioning Phase
+    Admin->>Manager: Enroll Device (device_id)
+    Manager-->>Admin: Return AuthToken
+    Admin->>ESP: Enter AuthToken via Captive Portal
+
+    Note over ESP, NTP: 2. Identity Bootstrapping
+    ESP->>NTP: Sync System Time (Required for TLS)
+    ESP->>Manager: HTTPS POST /bootstrap {AuthToken}
+    Manager->>Manager: Verify Token & Generate Keypair
+    Manager->>Manager: Sign Client Certificate (CN=device_id)
+    Manager-->>ESP: Return JSON Bundle (ca.crt, client.crt, client.key)
+    ESP->>ESP: Store Bundle in LittleFS
+
+    Note over ESP, Node: 3. Secure Operation (mTLS)
+    ESP->>Broker: Connect (mTLS Handshake on Port 8884)
+    Broker->>Broker: Verify Client Cert against Root CA
+    Broker-->>ESP: Connection Accepted
+    ESP->>Broker: Publish potbuddy/raw {device_id, sensors}
+    Broker->>Node: Deliver Payload
+    Node->>Node: Verify Payload device_id matches Cert CN
+    Node->>Node: Grade Health & Forward Telemetry
 ```
+
+### 1. Central Certificate Authority (CA)
+The **Manager API** serves as the Root CA. Upon startup (if `ENABLE_CA=true`), it generates or loads a persistent Root CA key-pair. It uses this to sign certificates for every device and processing node in the fleet.
+
+### 2. Identity-Based Access Control
+- **Common Name (CN)**: Every certificate issued has a unique CN (e.g., `Device-1` or `node-0`).
+- **Mosquitto Enforcement**: The broker is configured with `require_certificate true` and `use_identity_as_username true`. This means the broker extracts the device's identity directly from its cryptographically signed certificate, making password-based attacks impossible.
+
+### 3. The Bootstrapping Protocol
+To bridge the gap between "factory default" and "fully secure," devices use a one-time bootstrap process:
+1. **NTP Sync**: The ESP32 synchronizes its clock with `pool.ntp.org`. mTLS will fail if the device time is incorrect.
+2. **Token Exchange**: The device sends a one-time `AuthToken` via HTTPS to the Manager API.
+3. **Bundle Retrieval**: The Manager verifies the token and returns a JSON bundle containing:
+   - `ca.crt`: The Root CA certificate.
+   - `client.crt`: The device's unique signed certificate.
+   - `client.key`: The private key for that certificate.
+4. **Persistence**: These are stored securely in **LittleFS** on the ESP32.
+
+---
+
+## 🚀 Secure Deployment Guide
+
+### A. Manager API (The CA)
+Enable the Certificate Authority by setting the environment variable in your service file or docker-compose:
+```bash
+# potbuddy-manager.service
+Environment=ENABLE_CA=true
+```
+
+### B. MQTT Broker (mTLS Listener)
+The broker must be reachable on port **8883** (internal) or **8884** (external/forwarded).
+1. Generate a server certificate signed by the Manager CA.
+2. Update `mosquitto.conf`:
+```conf
+listener 8883
+cafile /etc/mosquitto/certs/ca.crt
+certfile /etc/mosquitto/certs/server.crt
+keyfile /etc/mosquitto/certs/server.key
+require_certificate true
+use_identity_as_username true
+```
+
+### C. ESP32 Provisioning
+1. **Hold BOOT Button**: Press and hold the BOOT button (GPIO 0) for 5 seconds to wipe settings.
+2. **Connect to Portal**: Join the `PotBuddy-Setup` WiFi network.
+3. **Configure**:
+   - `Manager Host`: `manager.kaminjitt.com`
+   - `MQTT Host`: `mqtt.kaminjitt.com`
+   - `MQTT mTLS Port`: `8884`
+   - `Device Auth Token`: (Generated from Dashboard)
 
 ---
 
@@ -79,25 +145,12 @@ The Local Node classifies each sensor reading independently then rolls up a **wo
 
 ---
 
-## 🔐 Security & Enrollment
-
-### 1. Zero-Trust mTLS
-Every MQTT client (Go-nodes and ESP32s) must possess a unique, CA-signed certificate. The **Manager API** acts as the Certificate Authority.
-- **Port 8883**: Standard mTLS listener on all edge brokers.
-- **Identity Mapping**: The Certificate Common Name (CN) is mapped directly to the MQTT username.
-
-### 2. Device Bootstrapping
-To solve the factory-default trust problem, devices follow a two-step enrollment:
-1. **Admin Enrollment**: Admin registers a `device_id` in the UI and receives a one-time **AuthToken**.
-2. **Device Bootstrap**: The device uses the `AuthToken` via HTTPS to download its permanent mTLS certificate bundle (`ca.crt`, `client.crt`, `client.key`).
-
----
-
 ## 🔌 Hardware
 
 ### Controller — ESP32-WROOM-32
 - **Connectivity**: WiFi + `WiFiClientSecure` for mTLS.
-- **Storage**: LittleFS for secure certificate persistence.
+- **Security**: Hardware-accelerated SHA/AES + NTP Time Sync.
+- **Storage**: LittleFS for certificate persistence.
 
 ### Sensors
 - **BH1750**: I2C Light Sensor.
@@ -106,29 +159,12 @@ To solve the factory-default trust problem, devices follow a two-step enrollment
 
 ---
 
-## 🚀 Getting Started
-
-Please see our comprehensive **[Deployment Guide](deployment.md)** to launch the project.
-
-### Fleet Simulation (mTLS)
-Run the fleet simulator to verify your mTLS infrastructure:
-```bash
-cd local-node
-# Issued via Manager API
-export MQTT_CA_FILE="../certs/ca.crt"
-export MQTT_CERT_FILE="../certs/client.crt"
-export MQTT_KEY_FILE="../certs/client.key"
-MQTT_BROKER=ssl://localhost:8883 make simulate
-```
-
----
-
-## progress
+## 📈 Progress
 
 - [x] **Phase 1: Core Identity & RBAC** (Google SSO, JWT)
 - [x] **Phase 2: Web Enrollment** (Infrastructure monitoring, Config download)
 - [x] **Phase 3: mTLS Infrastructure Rollout** (CA Logic, Mosquitto 8883, Go mTLS)
-- [ ] **Phase 4: IoT Device Migration** (WiFiManager, ESP32 HTTPS Bootstrap, mTLS MQTT)
+- [x] **Phase 4: IoT Device Migration** (WiFiManager, ESP32 HTTPS Bootstrap, mTLS MQTT)
 
 ---
 

@@ -1,14 +1,14 @@
-/*
-  BH1750 + DHT11 + Analog Soil Moisture Sensor for ESP32 WROOM 32
-  Integrated with MQTT for Telemetry
-*/
-
+#include <WiFi.h>
+#include <WiFiManager.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+#include <LittleFS.h>
 #include <Wire.h>
 #include <BH1750FVI.h>
 #include <SimpleDHT.h>
-#include <WiFi.h>
-#include <PubSubClient.h>
-#include "config.h"
+#include <time.h>
 
 // --- BH1750 Settings ---
 const int SDA_PIN = 21;
@@ -23,125 +23,254 @@ int pinDHT11 = 27;
 SimpleDHT11 dht11(pinDHT11);
 
 // --- Soil Moisture Settings ---
-const int SOIL_PIN = 36; // Analog pin connected to the sensor
+const int SOIL_PIN = 36;
+const int RESET_BUTTON_PIN = 0; // BOOT button on ESP32 DevKit V1
 
-// --- MQTT and WiFi Clients ---
-WiFiClient espClient;
-PubSubClient client(espClient);
+WiFiClientSecure secureClient;
+PubSubClient mqttClient(secureClient);
+
+String device_id = "";
+String manager_host = "";
+String mqtt_host = "";
+int bootstrap_port = 8081;
+int mqtt_port = 8883;
+String ca_crt = "";
+String client_crt = "";
+String client_key = "";
+
 unsigned long lastMsg = 0;
+const unsigned long TELEMETRY_FREQUENCY_MS = 5000;
 
-void setup_wifi() {
-  delay(10);
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(WIFI_SSID);
-
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-  while (WiFi.status() != WL_CONNECTED) {
+void syncTime() {
+  configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+  Serial.print("Waiting for NTP time sync: ");
+  time_t now = time(nullptr);
+  while (now < 8 * 3600 * 2) {
     delay(500);
     Serial.print(".");
+    now = time(nullptr);
   }
-
   Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
+  struct tm timeinfo;
+  gmtime_r(&now, &timeinfo);
+  Serial.print("Current time: "); Serial.print(asctime(&timeinfo));
 }
 
-void reconnect() {
-  // Loop until we're reconnected
-  while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Attempt to connect
-    if (client.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASS)) {
-      Serial.println("connected");
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
+bool loadConfig() {
+  if (!LittleFS.exists("/device_id.txt") || !LittleFS.exists("/ca.crt") || 
+      !LittleFS.exists("/client.crt") || !LittleFS.exists("/client.key") ||
+      !LittleFS.exists("/manager_host.txt")) {
+    return false;
+  }
+  
+  File f;
+  f = LittleFS.open("/device_id.txt", "r"); device_id = f.readString(); f.close();
+  f = LittleFS.open("/manager_host.txt", "r"); manager_host = f.readString(); f.close();
+  f = LittleFS.open("/ca.crt", "r"); ca_crt = f.readString(); f.close();
+  f = LittleFS.open("/client.crt", "r"); client_crt = f.readString(); f.close();
+  f = LittleFS.open("/client.key", "r"); client_key = f.readString(); f.close();
+  
+  if (LittleFS.exists("/mqtt_host.txt")) {
+    f = LittleFS.open("/mqtt_host.txt", "r"); mqtt_host = f.readString(); f.close();
+  }
+  if (LittleFS.exists("/b_port.txt")) {
+    f = LittleFS.open("/b_port.txt", "r"); bootstrap_port = f.readString().toInt(); f.close();
+  }
+  if (LittleFS.exists("/m_port.txt")) {
+    f = LittleFS.open("/m_port.txt", "r"); mqtt_port = f.readString().toInt(); f.close();
+  }
+  
+  return true;
+}
+
+void saveString(const char* path, String data) {
+  File f = LittleFS.open(path, "w");
+  if (f) { f.print(data); f.close(); }
+}
+
+bool performBootstrap(String host, int b_port, String token) {
+  host.trim();
+  token.trim();
+  HTTPClient http;
+  WiFiClient plainClient;
+  WiFiClientSecure httpsClient;
+  String url;
+  
+  if (host.startsWith("http://") || host.startsWith("https://")) {
+    url = host + "/api/enrollment/bootstrap";
+  } else {
+    String scheme = (b_port == 443) ? "https://" : "http://";
+    url = scheme + host + ":" + String(b_port) + "/api/enrollment/bootstrap";
+  }
+
+  Serial.println("Bootstrapping to: " + url);
+
+  if (url.startsWith("https://")) {
+    httpsClient.setInsecure(); 
+    http.begin(httpsClient, url);
+  } else {
+    http.begin(plainClient, url);
+  }
+  
+  http.addHeader("Content-Type", "application/json");
+  String payload = "{\"auth_token\":\"" + token + "\"}";
+  
+  int httpResponseCode = http.POST(payload);
+  if (httpResponseCode == 200 || httpResponseCode == 201) {
+    String response = http.getString();
+    JsonDocument doc;
+    deserializeJson(doc, response);
+    
+    device_id = doc["device_id"].as<String>();
+    ca_crt = doc["ca.crt"].as<String>();
+    client_crt = doc["client.crt"].as<String>();
+    client_key = doc["client.key"].as<String>();
+    manager_host = host;
+    
+    if (manager_host.startsWith("https://")) manager_host.remove(0, 8);
+    else if (manager_host.startsWith("http://")) manager_host.remove(0, 7);
+    if (manager_host.endsWith("/")) manager_host.remove(manager_host.length()-1);
+    
+    saveString("/device_id.txt", device_id);
+    saveString("/manager_host.txt", manager_host);
+    saveString("/ca.crt", ca_crt);
+    saveString("/client.crt", client_crt);
+    saveString("/client.key", client_key);
+    saveString("/b_port.txt", String(b_port));
+    saveString("/m_port.txt", String(mqtt_port));
+    
+    Serial.println("Bootstrap successful!");
+    http.end();
+    return true;
+  } else {
+    Serial.print("Bootstrap failed. HTTP Code: "); Serial.println(httpResponseCode);
+    Serial.println(http.getString());
+    http.end();
+    return false;
+  }
+}
+
+void handleManualReset() {
+  Serial.println("!!! Manual Reset Triggered. Wiping configuration and WiFi settings...");
+  WiFiManager wm;
+  wm.resetSettings();
+  LittleFS.format();
+  Serial.println("Wipe complete. Restarting...");
+  delay(1000);
+  ESP.restart();
+}
+
+void checkResetButton() {
+  if (digitalRead(RESET_BUTTON_PIN) == LOW) {
+    unsigned long holdStart = millis();
+    Serial.println("Reset button pressed. Keep holding for 5 seconds to reset...");
+    while (digitalRead(RESET_BUTTON_PIN) == LOW) {
+      if (millis() - holdStart > 5000) {
+        handleManualReset();
+      }
+      delay(100);
     }
   }
 }
 
-void setup() 
-{
+void setup() {
   Serial.begin(115200);
-  while (!Serial && millis() < 3000) {
-    delay(10);
-  }
+  pinMode(RESET_BUTTON_PIN, INPUT_PULLUP);
+  
+  if (!LittleFS.begin(true)) { Serial.println("LittleFS Mount Failed"); return; }
 
-  // Start I2C and Light Sensor
+  Serial.println("--- PotBuddy Booting ---");
+  checkResetButton();
+
+  bool isConfigured = loadConfig();
+  WiFiManager wm;
+  
+  if (!isConfigured) {
+    WiFiManagerParameter custom_host("host", "Manager Host (URL or IP)", "manager.iot.kaminjitt.com", 60);
+    WiFiManagerParameter custom_b_port("b_port", "Bootstrap Port (8081/443)", "8081", 6);
+    WiFiManagerParameter custom_mqtt_host("mqtt_host", "MQTT Host (Empty = Manager)", "", 60);
+    WiFiManagerParameter custom_m_port("m_port", "MQTT mTLS Port", "8883", 6);
+    WiFiManagerParameter custom_token("token", "Device Auth Token", "", 64);
+    
+    wm.addParameter(&custom_host);
+    wm.addParameter(&custom_b_port);
+    wm.addParameter(&custom_mqtt_host);
+    wm.addParameter(&custom_m_port);
+    wm.addParameter(&custom_token);
+    
+    if (!wm.autoConnect("PotBuddy-Setup")) { delay(3000); ESP.restart(); }
+    
+    String host_val = custom_host.getValue();
+    int b_port = String(custom_b_port.getValue()).toInt();
+    mqtt_host = custom_mqtt_host.getValue();
+    mqtt_port = String(custom_m_port.getValue()).toInt();
+    String token = custom_token.getValue();
+    
+    if (host_val != "" && token != "") {
+      saveString("/mqtt_host.txt", mqtt_host);
+      if (!performBootstrap(host_val, b_port, token)) {
+        wm.resetSettings(); LittleFS.format(); delay(3000); ESP.restart();
+      }
+    }
+  } else {
+    if (!wm.autoConnect("PotBuddy-Setup")) { delay(3000); ESP.restart(); }
+  }
+  
+  syncTime(); // Required for mTLS certificate validation
+  
+  String target_mqtt = (mqtt_host != "") ? mqtt_host : manager_host;
+  Serial.println("Setting up mTLS for " + target_mqtt);
+  
+  secureClient.setCACert(ca_crt.c_str());
+  secureClient.setCertificate(client_crt.c_str());
+  secureClient.setPrivateKey(client_key.c_str());
+  
+  mqttClient.setServer(target_mqtt.c_str(), mqtt_port);
   Wire.begin(SDA_PIN, SCL_PIN);
   LightSensor.begin();  
-
-  // Setup the soil pin to read data
   pinMode(SOIL_PIN, INPUT);
-  
-  // Setup WiFi and MQTT
-  setup_wifi();
-  client.setServer(MQTT_BROKER, MQTT_PORT);
-
-  Serial.println("Sensors Running!");
-  Serial.println("-------------------------");
+  Serial.println("Secure Telemetry Ready!");
 }
 
-void loop()
-{
-  if (!client.connected()) {
-    reconnect();
+void reconnect() {
+  String target_mqtt = (mqtt_host != "") ? mqtt_host : manager_host;
+  while (!mqttClient.connected()) {
+    checkResetButton();
+    Serial.print("Connecting MQTT to "); Serial.print(target_mqtt);
+    if (mqttClient.connect(device_id.c_str())) { Serial.println(" - connected"); }
+    else { 
+      Serial.print(" - failed, rc="); Serial.println(mqttClient.state()); 
+      for(int i=0; i<50; i++) {
+        checkResetButton();
+        delay(100);
+      }
+    }
   }
-  client.loop();
+}
+
+void loop() {
+  checkResetButton();
+  if (!mqttClient.connected()) reconnect();
+  mqttClient.loop();
 
   unsigned long now = millis();
   if (now - lastMsg > TELEMETRY_FREQUENCY_MS) {
     lastMsg = now;
-
-    // 1. Read Light Level
     uint16_t lux = LightSensor.GetLightIntensity();
+    byte temperature = 0, humidity = 0;
+    int err = dht11.read(&temperature, &humidity, NULL);
+    int soil = analogRead(SOIL_PIN);
+
+    JsonDocument doc;
+    doc["device_id"] = device_id;
+    doc["light"] = lux;
+    if (err == SimpleDHTErrSuccess) { doc["temp"] = (int)temperature; doc["hum"] = (int)humidity; }
+    doc["soil"] = soil;
     
-    // 2. Read DHT11
-    byte temperature = 0;
-    byte humidity = 0;
-    int err = SimpleDHTErrSuccess;
-    err = dht11.read(&temperature, &humidity, NULL);
-    
-    // 3. Read Soil Moisture
-    int soilMoistureRaw = analogRead(SOIL_PIN);
-
-    // --- Print Everything to Serial Monitor ---
-    Serial.print("Light: ");
-    Serial.print(lux);
-    Serial.print(" lux  |  ");
-
-    if (err != SimpleDHTErrSuccess) {
-      Serial.print("DHT Err!  |  ");
-    } else {
-      Serial.print("Temp: ");
-      Serial.print((int)temperature);
-      Serial.print("°C  |  Air Hum: ");
-      Serial.print((int)humidity);
-      Serial.print("%  |  ");
-    }
-
-    Serial.print("Soil Raw: ");
-    Serial.println(soilMoistureRaw);
-
-    // --- MQTT Publish ---
-    char msg[128];
-    if (err == SimpleDHTErrSuccess) {
-      snprintf(msg, 128, "{\"light\": %d, \"temp\": %d, \"hum\": %d, \"soil\": %d}", 
-               lux, (int)temperature, (int)humidity, soilMoistureRaw);
-    } else {
-      snprintf(msg, 128, "{\"light\": %d, \"soil\": %d}", 
-               lux, soilMoistureRaw);
-    }
-    
-    Serial.print("Publish message: ");
-    Serial.println(msg);
-    client.publish(MQTT_TOPIC, msg);
+    char msg[256];
+    serializeJson(doc, msg);
+    String topic = "potbuddy/" + device_id + "/raw";
+    mqttClient.publish(topic.c_str(), msg);
+    Serial.print("Published: "); Serial.println(msg);
   }
 }
