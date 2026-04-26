@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Leaf, Cpu, Save, Plus, Trash2, Edit2, Server, Activity, Users, LogOut, ShieldCheck, Key, Eye, EyeOff, Download, BookOpen } from 'lucide-react';
+import { Leaf, Cpu, Save, Plus, Trash2, Edit2, Server, Activity, Users, LogOut, ShieldCheck, Key, Eye, EyeOff, Download, BookOpen, Shield } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GoogleOAuthProvider, GoogleLogin } from '@react-oauth/google';
 import type { Profile, Device, ServiceHealth, User, InfrastructureNode, EnrolledDevice } from './api';
@@ -9,7 +9,7 @@ import {
   getUsers, inviteUser, deleteUser,
   getEnrolledNodes, enrollNode, updateEnrolledNode, deleteEnrolledNode,
   getEnrolledDevices, enrollDevice, deleteEnrolledDevice,
-  downloadNodeConfig
+  downloadNodeConfig, downloadBrokerCert
 } from './api';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -427,7 +427,8 @@ function EnrollmentManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
                   </td>
                   <td>
                     <div style={{ display: 'flex', gap: '0.4rem' }}>
-                      <button className="btn" style={{ padding: '0.4rem', background: 'rgba(255,255,255,0.1)' }} title="Download config.yaml" onClick={() => downloadNodeConfig(n.id)}><Download size={14} /></button>
+                      <button className="btn" style={{ padding: '0.4rem', background: 'rgba(255,255,255,0.1)' }} title="Download Node Bundle (config + mTLS)" onClick={() => downloadNodeConfig(n.id)}><Download size={14} /></button>
+                      <button className="btn" style={{ padding: '0.4rem', background: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa' }} title="Download MQTT Server Bundle" onClick={() => downloadBrokerCert(n.id)}><Shield size={14} /></button>
                       <button className="btn" style={{ padding: '0.4rem', background: 'rgba(255,255,255,0.1)' }} onClick={() => handleEditNode(n)}><Edit2 size={14} /></button>
                       <button className="btn danger" style={{ padding: '0.4rem' }} onClick={() => handleDeleteNode(n.id)}><Trash2 size={14} /></button>
                     </div>

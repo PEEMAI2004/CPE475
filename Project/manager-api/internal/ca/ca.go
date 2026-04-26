@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net"
 	"os"
 	"time"
 )
@@ -99,6 +100,14 @@ func LoadOrCreateCA(certPath, keyPath string) (*CA, error) {
 }
 
 func (ca *CA) SignCertificate(commonName string) (certPEM []byte, keyPEM []byte, err error) {
+	return ca.sign(commonName, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, nil, nil)
+}
+
+func (ca *CA) SignServerCertificate(commonName string, dnsNames []string, ipAddresses []net.IP) (certPEM []byte, keyPEM []byte, err error) {
+	return ca.sign(commonName, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, dnsNames, ipAddresses)
+}
+
+func (ca *CA) sign(commonName string, extKeyUsage []x509.ExtKeyUsage, dnsNames []string, ipAddresses []net.IP) (certPEM []byte, keyPEM []byte, err error) {
 	clientKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, nil, err
@@ -117,8 +126,10 @@ func (ca *CA) SignCertificate(commonName string) (certPEM []byte, keyPEM []byte,
 		},
 		NotBefore:   time.Now(),
 		NotAfter:    time.Now().AddDate(1, 0, 0),
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: extKeyUsage,
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		DNSNames:    dnsNames,
+		IPAddresses: ipAddresses,
 	}
 
 	certBytes, err := x509.CreateCertificate(rand.Reader, template, ca.Cert, &clientKey.PublicKey, ca.Key)

@@ -3,28 +3,38 @@ import time
 import pytest
 import subprocess
 import json
+import ssl
+import paho.mqtt.client as mqtt
 
 # Configuration
-BASE_URL = "http://localhost:8081/api"
-TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6ImthbWluLmppdHRAbWFpbC5rbXV0dC5hYy50aCIsInJvbGUiOiJTdXBlciBBZG1pbiIsImV4cCI6MTc3NzIxOTIzM30.vfMJny_h_Queeo9W805hKPa5f3Zu4DhB6zgaC0VKnFY"
-MQTT_HOST = "localhost" # Testing against local forward or internal bridge
-MQTT_PORT = 1884        # Standard port for easy automation (non-mTLS for logic testing)
+BASE_URL = "http://10.0.0.65:8081/api"
+TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6ImthbWluLmppdHRAbWFpbC5rbXV0dC5hYy50aCIsInJvbGUiOiJTdXBlciBBZG1pbiIsImV4cCI6MTc3NzMwNzc2MX0.9_Uzn_uc7l_CmT_ZUomnVtfhQIVMth2yDOVu9YBOZZE"
+MQTT_HOST = "10.0.0.69" # Site 1 MQTT IP
+MQTT_PORT = 8883
+NODE_API = "http://10.0.0.70:8080/history" # Site 1 Node API
 
 headers = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
-import paho.mqtt.publish as publish
-
 def run_mqtt_pub(device_id, payload):
-    """Simulates an ESP32 publishing via direct network connection to the local site broker"""
+    """Simulates an ESP32 publishing via mTLS to the local site broker"""
     topic = f"potbuddy/{device_id}/raw"
     msg = json.dumps(payload)
-    # Connect directly to the local broker on the mapped port
-    publish.single(
-        topic, 
-        payload=msg, 
-        hostname="localhost", 
-        port=1884
-    )
+    
+    client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, client_id=f"test-{device_id}")
+    
+    # Configure mTLS with manual SSL context to bypass hostname validation
+    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile="sit_ca.crt")
+    context.load_cert_chain(certfile="sit_client.crt", keyfile="sit_client.key")
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    
+    client.tls_set_context(context)
+    client.connect(MQTT_HOST, MQTT_PORT)
+    client.loop_start()
+    client.publish(topic, msg, qos=1)
+    time.sleep(1) # Ensure message is sent
+    client.loop_stop()
+    client.disconnect()
 
 def test_sit_auto_registration():
     """TC-INFRA-01: Verify that a new device is auto-registered upon first publish"""
@@ -44,7 +54,6 @@ def test_sit_auto_registration():
 def test_sit_health_grading_flow():
     """TC-EVAL-01, 02: End-to-End logic check from MQTT to Local Node API"""
     dev_id = "logic-test-esp32"
-    NODE_API = "http://localhost:8080/history"
     
     # 1. Send Healthy Data
     run_mqtt_pub(dev_id, {"light": 5000, "temp": 25, "hum": 50, "soil": 2000})
@@ -71,7 +80,6 @@ def test_sit_health_grading_flow():
 def test_sit_identity_spoof_detection():
     """TC-VAL-02: Verify that mismatched payload IDs are caught"""
     dev_id = "spoof-monitor"
-    NODE_API = "http://localhost:8080/history"
     
     # 1. Send legitimate data
     run_mqtt_pub(dev_id, {"device_id": dev_id, "soil": 2000})

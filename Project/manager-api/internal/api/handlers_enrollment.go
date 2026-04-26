@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 
@@ -93,6 +94,59 @@ func (s *Server) deleteEnrolledNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(200)
+}
+
+func (s *Server) generateServerCert(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var n models.InfrastructureNode
+	var addr, mqttAddr sql.NullString
+
+	err := s.DB.QueryRow("SELECT name, address, mqtt_address FROM infrastructure_nodes WHERE id = $1", id).
+		Scan(&n.Name, &addr, &mqttAddr)
+
+	if err == sql.ErrNoRows {
+		http.Error(w, "Node not found", 404)
+		return
+	} else if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	n.Address = addr.String
+	n.MQTTAddress = mqttAddr.String
+
+	if s.CA == nil {
+		http.Error(w, "CA disabled", 503)
+		return
+	}
+
+	dnsNames := []string{}
+	ips := []net.IP{}
+
+	target := n.MQTTAddress
+	if target == "" {
+		target = n.Address
+	}
+
+	if target != "" {
+		dnsNames = append(dnsNames, target)
+		if ip := net.ParseIP(target); ip != nil {
+			ips = append(ips, ip)
+		}
+	}
+
+	// Sign
+	certPEM, keyPEM, err := s.CA.SignServerCertificate(target, dnsNames, ips)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"ca.crt":     string(s.CA.CertPEM),
+		"server.crt": string(certPEM),
+		"server.key": string(keyPEM),
+	})
 }
 
 func (s *Server) getEnrolledDevices(w http.ResponseWriter, r *http.Request) {

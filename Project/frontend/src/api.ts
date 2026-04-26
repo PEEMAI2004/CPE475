@@ -139,7 +139,18 @@ export const downloadNodeConfig = async (id: number) => {
   const url = window.URL.createObjectURL(new Blob([response.data]));
   const link = document.createElement('a');
   link.href = url;
-  link.setAttribute('download', `node-${id}-config.yaml`);
+  link.setAttribute('download', `node-${id}-config-bundle.json`);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+};
+
+export const downloadBrokerCert = async (id: number) => {
+  const response = await api.post(`/enrollment/nodes/${id}/server-cert`, {}, { responseType: 'blob' });
+  const url = window.URL.createObjectURL(new Blob([response.data]));
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', `broker-${id}-cert-bundle.json`);
   document.body.appendChild(link);
   link.click();
   link.remove();
