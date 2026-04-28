@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/potbuddy/manager-api/internal/models"
 )
@@ -27,10 +28,11 @@ func (s *Server) getDevices(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		
-		d.Online = (onlineMap[d.DeviceID] == "1")
+		lookupID := strings.ToLower(d.DeviceID)
+		d.Online = (onlineMap[lookupID] == "1")
 		
 		healthStr := "unknown"
-		if val, exists := healthMap[d.DeviceID]; exists {
+		if val, exists := healthMap[lookupID]; exists {
 			switch val {
 			case "0":
 				healthStr = "healthy"

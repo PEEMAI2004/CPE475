@@ -40,7 +40,8 @@ func (s *Server) fetchPrometheus(query string) map[string]string {
 		}
 		if len(r.Value) == 2 {
 			if valStr, ok := r.Value[1].(string); ok {
-				result[dev] = valStr
+				// Use lowercase for case-insensitive matching in other handlers
+				result[strings.ToLower(dev)] = valStr
 			}
 		}
 	}

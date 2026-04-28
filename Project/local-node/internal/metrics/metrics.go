@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -90,7 +91,8 @@ func StartOnlineWatchdog() {
 
 // Update records an enriched payload as Prometheus metric values for the given device.
 func Update(p processor.EnrichedPayload) {
-	dev := p.DeviceID
+	// Use lowercase for all device IDs in metrics to ensure consistency with Grafana queries
+	dev := strings.ToLower(p.DeviceID)
 
 	// Mark device as online and refresh heartbeat.
 	deviceOnline.WithLabelValues(dev).Set(1)

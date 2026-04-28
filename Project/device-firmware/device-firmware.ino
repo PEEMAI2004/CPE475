@@ -274,6 +274,9 @@ void loop() {
     uint16_t lux = LightSensor.GetLightIntensity();
     byte temperature = 0, humidity = 0;
     int err = dht11.read(&temperature, &humidity, NULL);
+    if (err != SimpleDHTErrSuccess) {
+        Serial.print("DHT11 Read Failed, err="); Serial.println(err);
+    }
     int soil = analogRead(SOIL_PIN);
 
     // Change detection logic
