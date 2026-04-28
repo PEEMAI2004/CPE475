@@ -6,12 +6,28 @@ Choose the pathway that fits your environment below:
 
 ---
 
+## 🌐 Networking & Port Map
+
+For a distributed deployment, ensure the following ports are open in your firewalls:
+
+| Component | Port | Protocol | Purpose |
+| :--- | :---: | :--- | :--- |
+| **Edge Site** | 8883 | TCP/mTLS | MQTT Device/Node Communication |
+| **Edge Site** | 8080 | TCP/mTLS | Metrics Scraping (Prometheus) |
+| **Manager API** | 8081 | TCP/HTTPS | Web Dashboard & Enrollment |
+| **Database** | 5432 | TCP | Central Persistence (PostgreSQL) |
+| **Monitoring** | 9090 | TCP | Prometheus Web Interface |
+| **Monitoring** | 3000 | TCP | Grafana Visualization |
+
+---
+
 ## Method A: Distributed Linux Node Deployment (Non-Docker)
 
 This is the recommended deployment for a truly decoupled edge-cloud architecture, running directly as `systemd` background services.
 
 ### 1. Prerequisites
 - **A Central Database Server**: PostgreSQL 17 exposed.
+- **Database Initialization**: Run `psql -h <host> -U <user> -f init.sql potbuddy` to set up the schema before starting the Manager API.
 - **A Central Manager Server**: Runs the API & Web Dashboard.
 - **Edge Site Servers (`debian-*`)**: Local network gateways.
 - **Local MQTT Brokers (`mqtt-*`)**: Dedicated Mosquitto brokers per site.
@@ -53,14 +69,11 @@ systemctl status potbuddy-manager
 
 ### 4. Edge Processor Deployment
 These servers intercept local MQTT devices and relay them.
-1. Create customized config files (`config-0.yaml`, `config-1.yaml`) where `local_mqtt.broker` points to the site's local broker (e.g., `mqtt-0.iot.kaminjitt.com`).
-2. Upload `node-linux` and the mapped config file to `/opt/potbuddy/local-node/`.
-3. Configure `potbuddy.service` to utilize this path.
-4. Run the service:
-```bash
-systemctl daemon-reload
-systemctl enable --now potbuddy
-```
+1. **Download Node Bundle**: Use the Manager Dashboard to enroll the node and download the configuration bundle.
+2. **Deploy Certs**: Upload `ca.crt`, `client.crt`, and `client.key` to the server (typically in `/etc/potbuddy/certs/`).
+3. **Configuration**: Create a customized `config.yaml`.
+   - Set `validate_device_id: true` (or environment variable `VALIDATE_DEVICE_ID=true`) to enforce that the certificate Common Name matches the JSON payload `device_id`.
+4. **Run**: Start the `node-linux` binary as a `systemd` service. It will now serve HTTPS on port 8080 with mandatory mTLS.
 
 ---
 
@@ -94,15 +107,64 @@ This single command spins up:
 docker compose down -v
 ```
 
+## 📊 Monitoring Infrastructure
+
+PotBuddy uses a centralized monitoring stack to aggregate metrics from all distributed edge sites.
+
+### 1. Prometheus Deployment
+Prometheus acts as the central scraper. It is typically deployed in the cloud or a central management site.
+
+1. **Installation**: Install Prometheus using your package manager or Docker.
+2. **Identity**: Enroll Prometheus as a "Node" in the Manager Dashboard to download its mTLS client certificates (`ca.crt`, `prometheus.crt`, `prometheus.key`).
+3. **Configuration**: Mount these certificates into `/etc/prometheus/certs/` and update `prometheus.yml`:
+   ```yaml
+   scrape_configs:
+     - job_name: 'potbuddy-local-node'
+       scheme: https
+       tls_config:
+         ca_file: /etc/prometheus/certs/ca.crt
+         cert_file: /etc/prometheus/certs/prometheus.crt
+         key_file: /etc/prometheus/certs/prometheus.key
+       static_configs:
+         - targets: ['site-0.example.com:8080', 'site-1.example.com:8080']
+   ```
+
+### 2. Grafana Deployment
+Grafana provides the visual dashboard for plant health and system infrastructure.
+
+1. **Installation**: Deploy Grafana (port 3000) and connect it to your Prometheus instance as a Data Source.
+2. **Dashboard Import**: Import the PotBuddy dashboard JSON (if provided) or create a new one using the `potbuddy_*` metrics.
+3. **Health Integration**: Ensure Grafana is accessible at the URL configured in the Manager API (`grafana.iot.kaminjitt.com`) to enable integrated health checks in the Manager UI.
+
+---
+
+## 🧪 Deployment Verification
+
+After deployment, you can verify the system integrity using the provided test suite:
+
+1. **API Integration**: Run `pytest test_api.py` from the project root. Ensure `BASE_URL` in the script points to your Manager API.
+2. **MQTT Flow**: Use `python3 mqtt_test_helper.py` to simulate an mTLS-authenticated device. This verifies that the Broker, Local Node, and Database are communicating correctly.
+
+---
+
+## 🛠️ Troubleshooting
+
+| Issue | Likely Cause | Solution |
+| :--- | :--- | :--- |
+| **mTLS Handshake Failed** | Clock Skew | Ensure all Edge devices and Nodes are synced via **NTP** (e.g., `pool.ntp.org`). Certificates will fail if the system time is behind the "Not Before" date. |
+| **Hostname Mismatch** | Invalid SANs | Ensure Broker certificates include the correct IP or Domain Name in the Subject Alternative Names (SANs) field during enrollment. |
+| **Connection Refused** | Firewall | Verify that port `8883` (Edge) or `5432` (Cloud) is open and listeners are bound to `0.0.0.0`. |
+| **"Identity Spoofing" Alert** | CN Mismatch | The Local Node logged a security alert because a device connected with a valid certificate but tried to report data for a different `device_id`. |
+
 ---
 
 ## 📈 Scaling: Adding More Site Nodes
 
 PotBuddy is designed to support an unlimited number of physical sites. To add a new Edge Processor (Site Node):
 
-1.  **New Configuration**: Create a new config file (e.g., `local-node/config-2.yaml`) specifying the site's unique local MQTT broker.
-2.  **Edge Deployment**: Deploy the `node` binary to the new site's gateway server as described in **Method A**.
-3.  **Prometheus Integration**: Update the central `prometheus.yml` to include the new node's IP/Hostname in the `targets` list for the `potbuddy-local-node` job.
+1.  **New Configuration**: Create a new config file (e.g., `local-node/config-2.yaml`) specifying the site's unique local MQTT broker and mTLS credentials.
+2.  **Edge Deployment**: Deploy the `node` binary and its unique certificate bundle to the new site's gateway server.
+3.  **Prometheus Integration**: Update the central `prometheus.yml` to include the new node's IP/Hostname. **Note:** Prometheus must use a valid client certificate to scrape these nodes.
 4.  **Hardware Alignment**: Ensure the ESP32 devices at the new site are configured to publish to the local broker defined in step 1.
 
 The new node will automatically fetch all existing Plant Health Profiles from the central database upon startup.

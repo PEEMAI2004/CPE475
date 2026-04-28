@@ -58,6 +58,7 @@ func (s *Server) setupRoutes() {
 
 	s.Router.Handle("GET /api/enrollment/nodes/{id}/config", s.authMiddleware(s.roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(s.downloadNodeConfig))))
 	s.Router.Handle("POST /api/enrollment/nodes/{id}/server-cert", s.authMiddleware(s.roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(s.generateServerCert))))
+	s.Router.Handle("POST /api/enrollment/nodes/{id}/client-cert", s.authMiddleware(s.roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(s.generateClientCert))))
 
 	// User Management (Super Admin only)
 	s.Router.Handle("GET /api/users", s.authMiddleware(s.roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(s.getUsers))))

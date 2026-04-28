@@ -36,13 +36,13 @@ graph TD
     end
 
     Manager -- "Identity & Persistence" --> DB
-    Node -- "Metrics Scrape" --> Vis
+    Node <-->|mTLS Scrape :8080| Vis
     Vis -- "Persistence" --> DB
 ```
 
 ---
 
-## 🔐 Zero-Trust mTLS Implementation
+## 🔐 mTLS Implementation
 
 PotBuddy ensures security by treating every component as a potential threat until proven otherwise via cryptographic identity.
 
@@ -52,22 +52,28 @@ PotBuddy ensures security by treating every component as a potential threat unti
 graph TD
     subgraph "Edge Sites (Site 0, Site 1, ... Site N)"
         ESP32["<b>ESP32 Device</b><br/>(mTLS Identity)"] <-->|MQTT :8883| Broker["<b>Mosquitto</b><br/>(Verifies CA)"]
-        Node["<b>Edge Processor</b><br/>(mTLS Client)"] <-->|MQTT :8883| Broker
+        Node["<b>Edge Processor</b><br/>(mTLS Client/Server)"] <-->|MQTT :8883| Broker
     end
 
+    Node <-->|mTLS Scrape :8080| Prom["<b>Prometheus</b><br/>(mTLS Client)"]
     Node -- "REST / Config" --> Manager["<b>Central Manager API</b><br/>(CA & Enrollment)"]
 ```
 
 ### 1. Central Certificate Authority (CA)
 The **Manager API** serves as the Root CA. It dynamically generates two types of identities:
-- **Client Identities**: For ESP32 devices and Edge Processors (CN = `device_id`).
-- **Server Identities**: For Mosquitto brokers, including Subject Alternative Names (SANs) for hostnames and IPs (e.g., `mqtt-1.iot.kaminjitt.com`).
+- **Client Identities**: For ESP32 devices, Edge Processors, and the Prometheus Scraper.
+- **Server Identities**: For Mosquitto brokers and Local Node APIs, including SANs for hostnames.
 
 ### 2. Multi-Site Distributed Security
 PotBuddy is proven in production across multiple physical sites:
 - **Site 0**: Operational at `mqtt-0.iot.kaminjitt.com`.
 - **Site 1**: Operational at `mqtt-1.iot.kaminjitt.com`.
 Every broker uses strict mTLS, mapping certificate identities to MQTT usernames automatically.
+
+### 3. Monitoring & Scraper Security (mTLS)
+To achieve true **Zero-Trust**, the Local Node HTTP API (Port 8080) is secured using the same Root CA:
+- **mTLS Required**: The `/metrics` endpoint rejects any connection without a CA-signed certificate.
+- **Infrastructure Identity**: Prometheus is enrolled as a secure client, using its own identity bundle to authenticate against edge nodes.
 
 ---
 
@@ -89,7 +95,21 @@ To secure a new site broker (e.g., Site 2):
 ### C. Edge Processor (Local Node)
 1. **Download Node Bundle**: In the **Enrollment** tab, click the **Download icon** (📥) to get `node-id-config-bundle.json`.
 2. **Deploy**: Extract the `config.yaml` and mTLS certificates to the edge server.
-3. **Run**: Start the `local-node` binary; it will automatically use the bundled certs to connect to the local broker.
+3. **Run**: Start the `local-node` binary. It serves HTTPS with mTLS on port 8080 and connects to the local broker on 8883.
+
+### D. Prometheus Scraper
+1. **Generate Scraper Identity**: Enroll "Prometheus" as a node in the Manager UI.
+2. **Configure Scrape Job**:
+   ```yaml
+   - job_name: 'potbuddy-local-node'
+     scheme: https
+     tls_config:
+       ca_file: /etc/prometheus/certs/ca.crt
+       cert_file: /etc/prometheus/certs/prometheus.crt
+       key_file: /etc/prometheus/certs/prometheus.key
+     static_configs:
+       - targets: ['site-hostname:8080']
+   ```
 
 ---
 
@@ -101,6 +121,8 @@ To secure a new site broker (e.g., Site 2):
    - `MQTT Host`: `(MQTT Broker Address from Dashboard)`
    - `MQTT mTLS Port`: `8883`
    - `Device Auth Token`: (Generated from Dashboard)
+
+> **⚠️ Critical Note**: ESP32 devices require a working internet connection to sync time via **NTP** before connecting. If the device clock is incorrect, mTLS handshakes with the MQTT broker will fail.
 
 ---
 

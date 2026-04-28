@@ -149,6 +149,52 @@ func (s *Server) generateServerCert(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) generateClientCert(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var n models.InfrastructureNode
+	var token sql.NullString
+
+	err := s.DB.QueryRow("SELECT name, token FROM infrastructure_nodes WHERE id = $1", id).
+		Scan(&n.Name, &token)
+
+	if err == sql.ErrNoRows {
+		http.Error(w, "Node not found", 404)
+		return
+	} else if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	n.Token = token.String
+
+	if s.CA == nil {
+		http.Error(w, "CA disabled", 503)
+		return
+	}
+
+	tokenSuffix := n.Token
+	if strings.HasPrefix(tokenSuffix, "pb_node_") {
+		tokenSuffix = tokenSuffix[8:]
+	}
+	if len(tokenSuffix) > 8 {
+		tokenSuffix = tokenSuffix[:8]
+	}
+	commonName := fmt.Sprintf("%s-%s", n.Name, tokenSuffix)
+
+	// Sign
+	certPEM, keyPEM, err := s.CA.SignCertificate(commonName)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"ca.crt":     string(s.CA.CertPEM),
+		"client.crt": string(certPEM),
+		"client.key": string(keyPEM),
+	})
+}
+
 func (s *Server) getEnrolledDevices(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.DB.Query("SELECT device_id, auth_token, created_at FROM devices ORDER BY created_at DESC")
 	if err != nil {

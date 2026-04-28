@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -134,12 +136,41 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 	}
 
-	go func() {
-		log.Printf("[api] listening on http://localhost:%d", cfg.HTTP.Port)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("[api] server error: %v", err)
+	// Enable mTLS if configured
+	if cfg.HTTP.CertFile != "" && cfg.HTTP.KeyFile != "" {
+		tlsConfig := &tls.Config{
+			MinVersion: tls.VersionTLS12,
 		}
-	}()
+
+		if cfg.HTTP.CAFile != "" {
+			caCert, err := os.ReadFile(cfg.HTTP.CAFile)
+			if err != nil {
+				log.Fatalf("failed to read HTTP CA file: %v", err)
+			}
+			caCertPool := x509.NewCertPool()
+			if !caCertPool.AppendCertsFromPEM(caCert) {
+				log.Fatalf("failed to parse HTTP CA certificate")
+			}
+			tlsConfig.ClientCAs = caCertPool
+			tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+		}
+
+		srv.TLSConfig = tlsConfig
+
+		go func() {
+			log.Printf("[api] listening on https://0.0.0.0:%d (mTLS enabled)", cfg.HTTP.Port)
+			if err := srv.ListenAndServeTLS(cfg.HTTP.CertFile, cfg.HTTP.KeyFile); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("[api] server error: %v", err)
+			}
+		}()
+	} else {
+		go func() {
+			log.Printf("[api] listening on http://localhost:%d", cfg.HTTP.Port)
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("[api] server error: %v", err)
+			}
+		}()
+	}
 
 	// --- Graceful shutdown ---
 	quit := make(chan os.Signal, 1)

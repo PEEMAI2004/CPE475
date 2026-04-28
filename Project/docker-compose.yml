@@ -38,6 +38,11 @@ services:
       DB_DSN: "postgres://postgres:postgres@postgres:5432/potbuddy?sslmode=disable"
       DEVICE_ID: "esp32-docker-root-node"
       VALIDATE_DEVICE_ID: "true"
+      HTTP_CA_FILE: "/certs/ca.crt"
+      HTTP_CERT_FILE: "/certs/server.crt"
+      HTTP_KEY_FILE: "/certs/server.key"
+    volumes:
+      - ./certs:/certs
     depends_on:
       postgres:
         condition: service_healthy

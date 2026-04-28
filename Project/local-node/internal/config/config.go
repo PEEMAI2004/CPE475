@@ -33,7 +33,10 @@ type MQTTConfig struct {
 
 // HTTPConfig holds settings for the local HTTP API server.
 type HTTPConfig struct {
-	Port int `yaml:"port"`
+	Port     int    `yaml:"port"`
+	CAFile   string `yaml:"ca_file"`
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
 }
 
 // StoreConfig holds settings for the in-memory ring buffer.
@@ -84,6 +87,15 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("DB_DSN"); v != "" {
 		cfg.Database.DSN = v
+	}
+	if v := os.Getenv("HTTP_CA_FILE"); v != "" {
+		cfg.HTTP.CAFile = v
+	}
+	if v := os.Getenv("HTTP_CERT_FILE"); v != "" {
+		cfg.HTTP.CertFile = v
+	}
+	if v := os.Getenv("HTTP_KEY_FILE"); v != "" {
+		cfg.HTTP.KeyFile = v
 	}
 	if v := os.Getenv("DEVICE_ID"); v != "" {
 		cfg.DeviceID = v
