@@ -32,6 +32,7 @@ String client_crt = "";
 String client_key = "";
 
 unsigned long lastMsg = 0;
+unsigned long mqtt_backoff_ms = MQTT_RECONNECT_INITIAL_BACKOFF_MS;
 
 void syncTime() {
   configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER_1, NTP_SERVER_2);
@@ -98,7 +99,7 @@ bool performBootstrap(String host, int b_port, String token) {
   Serial.println("Bootstrapping to: " + url);
 
   if (url.startsWith("https://")) {
-    httpsClient.setInsecure(); 
+    httpsClient.setCACert(ROOT_CA_CERT); 
     http.begin(httpsClient, url);
   } else {
     http.begin(plainClient, url);
@@ -229,12 +230,24 @@ void reconnect() {
   while (!mqttClient.connected()) {
     checkResetButton();
     Serial.print("Connecting MQTT to "); Serial.print(target_mqtt);
-    if (mqttClient.connect(device_id.c_str())) { Serial.println(" - connected"); }
+    if (mqttClient.connect(device_id.c_str())) { 
+      Serial.println(" - connected"); 
+      mqtt_backoff_ms = MQTT_RECONNECT_INITIAL_BACKOFF_MS; // Reset backoff on success
+    }
     else { 
       Serial.print(" - failed, rc="); Serial.println(mqttClient.state()); 
-      for(int i=0; i<50; i++) {
+      Serial.print("Next attempt in "); Serial.print(mqtt_backoff_ms / 1000); Serial.println(" seconds...");
+      
+      unsigned long start_wait = millis();
+      while (millis() - start_wait < mqtt_backoff_ms) {
         checkResetButton();
         delay(100);
+      }
+      
+      // Increase backoff for next time, capped at max
+      mqtt_backoff_ms *= 2;
+      if (mqtt_backoff_ms > MQTT_RECONNECT_MAX_BACKOFF_MS) {
+        mqtt_backoff_ms = MQTT_RECONNECT_MAX_BACKOFF_MS;
       }
     }
   }
