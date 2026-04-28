@@ -17,6 +17,7 @@
 
 // --- Application Settings ---
 #define TELEMETRY_INTERVAL_MS   5000
+#define MAX_SILENT_INTERVAL_MS  20000
 #define RESET_HOLD_TIME_MS      5000
 
 // --- MQTT Backoff Settings ---

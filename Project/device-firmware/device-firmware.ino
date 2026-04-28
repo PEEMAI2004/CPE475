@@ -34,6 +34,13 @@ String client_key = "";
 unsigned long lastMsg = 0;
 unsigned long mqtt_backoff_ms = MQTT_RECONNECT_INITIAL_BACKOFF_MS;
 
+// --- Change Detection & Heartbeat ---
+uint16_t last_lux = 0;
+int last_temp = 0;
+int last_hum = 0;
+int last_soil = 0;
+unsigned long last_send_time = 0;
+
 void syncTime() {
   configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER_1, NTP_SERVER_2);
   Serial.print("Waiting for NTP time sync: ");
@@ -55,10 +62,11 @@ bool loadConfig() {
       !LittleFS.exists("/manager_host.txt")) {
     return false;
   }
-  
   File f;
   f = LittleFS.open("/device_id.txt", "r"); device_id = f.readString(); f.close();
+  device_id.trim(); // Remove any potential newlines or spaces
   f = LittleFS.open("/manager_host.txt", "r"); manager_host = f.readString(); f.close();
+  manager_host.trim();
   f = LittleFS.open("/ca.crt", "r"); ca_crt = f.readString(); f.close();
   f = LittleFS.open("/client.crt", "r"); client_crt = f.readString(); f.close();
   f = LittleFS.open("/client.key", "r"); client_key = f.readString(); f.close();
@@ -261,21 +269,46 @@ void loop() {
   unsigned long now = millis();
   if (now - lastMsg > TELEMETRY_INTERVAL_MS) {
     lastMsg = now;
+
+    // Read sensors
     uint16_t lux = LightSensor.GetLightIntensity();
     byte temperature = 0, humidity = 0;
     int err = dht11.read(&temperature, &humidity, NULL);
     int soil = analogRead(SOIL_PIN);
 
-    JsonDocument doc;
-    doc["device_id"] = device_id;
-    doc["light"] = lux;
-    if (err == SimpleDHTErrSuccess) { doc["temp"] = (int)temperature; doc["hum"] = (int)humidity; }
-    doc["soil"] = soil;
-    
-    char msg[256];
-    serializeJson(doc, msg);
-    String topic = "potbuddy/" + device_id + "/raw";
-    mqttClient.publish(topic.c_str(), msg);
-    Serial.print("Published: "); Serial.println(msg);
+    // Change detection logic
+    bool changed = (lux != last_lux) || (abs(soil - last_soil) > 50); // Small threshold for analog soil noise
+    if (err == SimpleDHTErrSuccess) {
+        changed = changed || ((int)temperature != last_temp) || ((int)humidity != last_hum);
+    }
+
+    // Heartbeat logic (ensure we don't time out in the dashboard)
+    bool heartbeat = (now - last_send_time > MAX_SILENT_INTERVAL_MS);
+
+    if (changed || heartbeat) {
+        last_lux = lux;
+        last_soil = soil;
+        if (err == SimpleDHTErrSuccess) {
+            last_temp = (int)temperature;
+            last_hum = (int)humidity;
+        }
+        last_send_time = now;
+
+        JsonDocument doc;
+        doc["device_id"] = device_id;
+        doc["light"] = lux;
+        if (err == SimpleDHTErrSuccess) { doc["temp"] = (int)temperature; doc["hum"] = (int)humidity; }
+        doc["soil"] = soil;
+
+        char msg[256];
+        serializeJson(doc, msg);
+        String topic = "potbuddy/" + device_id + "/raw";
+        mqttClient.publish(topic.c_str(), msg);
+
+        Serial.print("Published (reason="); 
+        Serial.print(changed ? "change" : "heartbeat"); 
+        Serial.print("): "); 
+        Serial.println(msg);
+    }
   }
 }
