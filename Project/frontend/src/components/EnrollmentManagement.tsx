@@ -140,21 +140,24 @@ export default function EnrollmentManagement({ isSuperAdmin }: { isSuperAdmin: b
           >
             <h3 style={{ marginBottom: '1rem', color: 'var(--accent)' }}>Edge Site Enrollment Guide</h3>
             <ol style={{ paddingLeft: '1.5rem', lineHeight: '1.6', color: 'var(--text-sub)' }}>
-              <li><strong>Register Site:</strong> Fill in the "Infrastructure Enrollment" form below. Use the IP/Domain of the Site Gateway.</li>
-              <li><strong>Download Config:</strong> Once registered, click the <Download size={14} /> button in the table to get your <code>config.yaml</code>.</li>
-              <li><strong>Deploy Site Processor:</strong> 
+              <li><strong>Register Site:</strong> Fill in the "Infrastructure Enrollment" form below using the Public IP or Domain.</li>
+              <li><strong>Download Bundle:</strong> Click <Download size={14} /> to get <code>config.yaml</code> and certificates.</li>
+              <li><strong>Provision Edge Server:</strong>
                 <ul style={{ paddingLeft: '1.5rem', marginTop: '0.5rem' }}>
-                  <li>Transfer <code>config.yaml</code> to the edge server.</li>
-                  <li>The config automatically routes to the site broker (defaulting to the same IP).</li>
+                  <li>Upload binary to <code>/opt/potbuddy/local-node/bin/node</code>.</li>
+                  <li>Upload <code>config.yaml</code> to <code>/opt/potbuddy/local-node/</code>.</li>
+                  <li>Deploy <code>ca.crt</code>, <code>client.crt</code>, and <code>client.key</code> to <code>/etc/potbuddy/certs/</code>.</li>
                 </ul>
               </li>
-              <li><strong>Verify:</strong> Check the "Infra" tab. You should see both <strong>Node</strong> and <strong>MQTT</strong> entries for this site.</li>
+              <li><strong>MQTT Setup:</strong> Click <Shield size={14} /> to download the <b>MQTT Server Bundle</b> and deploy to <code>/etc/mosquitto/certs/</code> on your broker server.</li>
+              <li><strong>Install Service:</strong> Enable and start the <code>potbuddy.service</code> unit using <code>systemctl</code>.</li>
+              <li><strong>Verify:</strong> Ensure the node is online via the <b>Infra</b> page (status updates every 60s).</li>
             </ol>
             <h3 style={{ marginTop: '1.5rem', marginBottom: '1rem', color: 'var(--accent)' }}>ESP32 Device Enrollment (mTLS)</h3>
             <ol style={{ paddingLeft: '1.5rem', lineHeight: '1.6', color: 'var(--text-sub)' }}>
-              <li><strong>Register Device:</strong> Enter a unique ID for your ESP32.</li>
-              <li><strong>Download Bundle:</strong> Click "Enroll & Download Bundle". This JSON file contains your <b>Certificate</b>, <b>Private Key</b>, and <b>Root CA</b>.</li>
-              <li><strong>Provision:</strong> Use the PotBuddy Provisioning tool (or Captive Portal in Phase 4) to upload this bundle to your device.</li>
+              <li><strong>Register Device:</strong> Enter a unique hardware ID below and click <b>Generate Auth Token</b>.</li>
+              <li><strong>Provision:</strong> Connect to the ESP32's setup WiFi and enter the one-time <b>AuthToken</b>.</li>
+              <li><strong>Secure Handshake:</strong> The device will automatically fetch its mTLS certificates from this API and begin publishing to its local broker.</li>
             </ol>
           </motion.div>
         )}
