@@ -134,6 +134,9 @@ export const getEnrolledDevices = async () => (await api.get<EnrolledDevice[]>('
 export const enrollDevice = async (device_id: string) => (await api.post<DeviceEnrollmentBundle>('/enrollment/devices', { device_id })).data;
 export const deleteEnrolledDevice = async (id: string) => await api.delete(`/enrollment/devices/${id}`);
 
+export const regenNodeToken = async (id: number) => (await api.post<{ token: string }>(`/enrollment/nodes/${id}/regen-token`)).data;
+export const regenDeviceAuthToken = async (id: string) => (await api.post<{ auth_token: string }>(`/enrollment/devices/${id}/regen-token`)).data;
+
 export const downloadNodeConfig = async (id: number) => {
   const response = await api.get(`/enrollment/nodes/${id}/config`, { responseType: 'blob' });
   const url = window.URL.createObjectURL(new Blob([response.data]));

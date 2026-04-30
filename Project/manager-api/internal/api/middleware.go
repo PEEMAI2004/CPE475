@@ -65,3 +65,48 @@ func (s *Server) roleMiddleware(allowedRoles []string, next http.Handler) http.H
 		next.ServeHTTP(w, r)
 	})
 }
+
+func (s *Server) machineAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := r.Header.Get("X-PotBuddy-Token")
+		if token == "" {
+			// Also support Authorization header
+			authHeader := r.Header.Get("Authorization")
+			if strings.HasPrefix(authHeader, "Bearer ") {
+				token = authHeader[7:]
+			}
+		}
+
+		if token == "" {
+			http.Error(w, "Missing AuthToken", http.StatusUnauthorized)
+			return
+		}
+
+		var identity models.MachineIdentity
+
+		// Check if it's a node token
+		if strings.HasPrefix(token, "pb_node_") {
+			var nodeID string
+			err := s.DB.QueryRow("SELECT name FROM infrastructure_nodes WHERE token = $1", token).Scan(&nodeID)
+			if err == nil {
+				identity.ID = nodeID
+				identity.Type = "node"
+			}
+		} else if strings.HasPrefix(token, "pb_dev_") {
+			var deviceID string
+			err := s.DB.QueryRow("SELECT device_id FROM devices WHERE auth_token = $1", token).Scan(&deviceID)
+			if err == nil {
+				identity.ID = deviceID
+				identity.Type = "device"
+			}
+		}
+
+		if identity.ID == "" {
+			http.Error(w, "Invalid AuthToken", http.StatusUnauthorized)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), "identity", &identity)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}

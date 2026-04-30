@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/potbuddy/manager-api/internal/models"
 )
 
 type PromResponse struct {
@@ -174,4 +176,18 @@ func (s *Server) getInfrastructureHealth(w http.ResponseWriter, r *http.Request)
 	wg.Wait()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)
+}
+
+func (s *Server) reportHeartbeat(w http.ResponseWriter, r *http.Request) {
+	identity, ok := r.Context().Value("identity").(*models.MachineIdentity)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// For now, we just log it. In a real system, we might update a 'last_seen' timestamp in the DB.
+	// fmt.Printf("Heartbeat received from %s (%s)\n", identity.ID, identity.Type)
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "identity": identity.ID})
 }

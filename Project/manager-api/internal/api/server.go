@@ -60,6 +60,12 @@ func (s *Server) setupRoutes() {
 	s.Router.Handle("POST /api/enrollment/nodes/{id}/server-cert", s.authMiddleware(s.roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(s.generateServerCert))))
 	s.Router.Handle("POST /api/enrollment/nodes/{id}/client-cert", s.authMiddleware(s.roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(s.generateClientCert))))
 
+	s.Router.Handle("POST /api/enrollment/nodes/{id}/regen-token", s.authMiddleware(s.roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(s.regenNodeToken))))
+	s.Router.Handle("POST /api/enrollment/devices/{id}/regen-token", s.authMiddleware(s.roleMiddleware([]string{"Super Admin", "Site Admin"}, http.HandlerFunc(s.regenDeviceAuthToken))))
+
+	// Machine-to-Machine API (Secured by Node/Device Tokens)
+	s.Router.Handle("POST /api/infrastructure/heartbeat", s.machineAuthMiddleware(http.HandlerFunc(s.reportHeartbeat)))
+
 	// User Management (Super Admin only)
 	s.Router.Handle("GET /api/users", s.authMiddleware(s.roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(s.getUsers))))
 	s.Router.Handle("POST /api/users", s.authMiddleware(s.roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(s.inviteUser))))

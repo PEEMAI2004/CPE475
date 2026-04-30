@@ -414,3 +414,43 @@ device_id: %q
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(bundle)
 }
+
+func (s *Server) regenNodeToken(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	newToken := "pb_node_" + s.generateToken(16)
+
+	result, err := s.DB.Exec("UPDATE infrastructure_nodes SET token=$1 WHERE id=$2", newToken, id)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		http.Error(w, "Node not found", 404)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"token": newToken})
+}
+
+func (s *Server) regenDeviceAuthToken(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	newToken := "pb_dev_" + s.generateToken(16)
+
+	result, err := s.DB.Exec("UPDATE devices SET auth_token=$1 WHERE device_id=$2", newToken, id)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		http.Error(w, "Device not found", 404)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"auth_token": newToken})
+}

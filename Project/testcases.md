@@ -9,10 +9,10 @@ This document outlines the test cases designed to cover all features and edge ca
 | **1. Auth & RBAC** | | | | |
 | TC-AUTH-01 | Valid Google Login | Manual | UI | - |
 | TC-AUTH-02 | Unregistered User | Manual | UI | - |
-| TC-AUTH-03 | Invalid ID Token | Automatable | API | - |
+| TC-AUTH-03 | Invalid ID Token | Automated | API | `test_auth_invalid_id_token` |
 | TC-RBAC-01 | Super Admin Permissions | Automated | API | `test_rbac_super_admin_access` |
-| TC-RBAC-02 | Site Admin Permissions | Automatable | API | - |
-| TC-RBAC-03 | Viewer Permissions | Automatable | API | - |
+| TC-RBAC-02 | Site Admin Permissions | Automated | API | `test_rbac_site_admin_permissions` |
+| TC-RBAC-03 | Viewer Permissions | Automated | API | `test_rbac_viewer_permissions` |
 | TC-RBAC-04 | Invalid/Expired JWT | Automated | API | `test_rbac_invalid_token` |
 | **2. Node Enrollment** | | | | |
 | TC-NODE-01 | Successful Enrollment | Automated | API | `test_infrastructure_node_lifecycle` |
@@ -20,11 +20,15 @@ This document outlines the test cases designed to cover all features and edge ca
 | TC-NODE-03 | Config Download (Valid) | Automated | API | `test_infrastructure_node_lifecycle` |
 | TC-NODE-04 | Config Download (Invalid Node) | Automated | API | `test_node_enrollment_negative` |
 | TC-NODE-05 | Node Deletion | Automated | API | `test_infrastructure_node_lifecycle` |
+| TC-NODE-06 | Token Regeneration (Valid) | Automated | API | `test_infrastructure_node_lifecycle` |
+| TC-NODE-07 | Token Regeneration (Forbidden) | Automated | API | `test_node_token_regeneration_forbidden` |
 | **3. Device & Bootstrap** | | | | |
 | TC-DEV-01 | Successful Registration (CA Enabled) | Automated | API | `test_device_bootstrap_lifecycle` |
 | TC-DEV-02 | Successful Registration (CA Disabled) | Automated | API | `test_device_bootstrap_lifecycle` |
 | TC-DEV-03 | Duplicate Device ID | Automated | API | `test_device_registration_negative` |
-| TC-DEV-04 | Empty Device ID | Automatable | API | - |
+| TC-DEV-04 | Empty Device ID | Automated | API | `test_device_registration_negative` |
+| TC-DEV-05 | AuthToken Regeneration (Valid) | Automated | API | `test_device_bootstrap_lifecycle` |
+| TC-DEV-06 | AuthToken Regeneration (Forbidden) | Automated | API | `test_device_token_regeneration_forbidden` |
 | TC-BOOT-01 | Valid Bootstrapping | Automated | API | `test_device_bootstrap_lifecycle` |
 | TC-BOOT-02 | Invalid/Fake AuthToken | Automated | API | `test_bootstrap_invalid_token` |
 | TC-BOOT-03 | Bootstrapping with CA Disabled | Automated | API | `test_device_bootstrap_lifecycle` |
@@ -46,9 +50,12 @@ This document outlines the test cases designed to cover all features and edge ca
 | TC-EVAL-04 | Boundary Values | Manual | SIT | - |
 | **6. Infra & Monitoring** | | | | |
 | TC-INFRA-01 | Auto-Registration | Automated | SIT | `test_sit_auto_registration` |
-| TC-INFRA-02 | Online Watchdog | Automatable | SIT | - |
+| TC-INFRA-02 | Online Watchdog | Automated | SIT | `test_sit_online_watchdog` |
 | TC-INFRA-03 | Service Health Check | Automated | API | `test_system_infrastructure_health` |
-| TC-INFRA-04 | Database Polling | Automatable | SIT | - |
+| TC-INFRA-04 | Database Polling | Automated | SIT | `test_sit_database_polling` |
+| **7. Cross-Environment Execution** | | | | |
+| TC-ENV-01 | Local Docker Compose | Automated | ALL | Supported via Default Config |
+| TC-ENV-02 | Remote Infrastructure | Automated | ALL | Supported via Env Overrides |
 
 ---
 
@@ -83,6 +90,10 @@ This document outlines the test cases designed to cover all features and edge ca
   - *Expected:* `404 Not Found`.
 - **TC-NODE-05: Node Deletion.** Delete an existing node. 
   - *Expected:* `200 OK`, node removed from the database.
+- **TC-NODE-06: Token Regeneration (Valid).** Super Admin regenerates the node token.
+  - *Expected:* `200 OK`, returns new `pb_node_` token, database updated.
+- **TC-NODE-07: Token Regeneration (Forbidden).** Site Admin or Viewer attempts to regenerate node token.
+  - *Expected:* `403 Forbidden`.
 
 ---
 
@@ -161,3 +172,48 @@ This document outlines the test cases designed to cover all features and edge ca
   - *Expected:* Returns real-time TCP/HTTP health status for DB, Manager, Scrapers, and registered Edge Nodes.
 - **TC-INFRA-04: Database Polling.** Update a profile threshold in the database. 
   - *Expected:* Local node's caching loop picks up the change within 1 minute and applies it to incoming payloads automatically.
+
+---
+
+## 7. Cross-Environment Execution
+
+The PotBuddy test suite is designed to run interchangeably against local development environments and remote production-like infrastructure.
+
+### 7.1 Local Docker Compose
+By default, the tests target `localhost` and the internal Docker port mapping.
+```bash
+cd Project/
+./test_venv/bin/pytest -v test_api.py test_sit.py
+```
+
+### 7.2 Remote Infrastructure Execution
+To target a remote deployment, override the environment variables. The SIT tests automatically switch from `docker exec` to `ssh` for database manipulations based on the `BASE_URL` or `REMOTE_TEST` flag.
+
+#### **Targeting Site 0 (Default)**
+```bash
+REMOTE_TEST=true \
+BASE_URL=http://manager.iot.kaminjitt.com:8081/api \
+MQTT_HOST=mqtt-0.iot.kaminjitt.com \
+NODE_API=https://debian-0.iot.kaminjitt.com:8080/history \
+METRICS_API=https://debian-0.iot.kaminjitt.com:8080/metrics \
+./test_venv/bin/pytest -v test_api.py test_sit.py
+```
+
+#### **Targeting Site 1 (Other Node)**
+To test against a different site, simply update the `MQTT_HOST`, `NODE_API`, and `METRICS_API` domains:
+```bash
+REMOTE_TEST=true \
+BASE_URL=http://manager.iot.kaminjitt.com:8081/api \
+MQTT_HOST=mqtt-1.iot.kaminjitt.com \
+NODE_API=https://debian-1.iot.kaminjitt.com:8080/history \
+METRICS_API=https://debian-1.iot.kaminjitt.com:8080/metrics \
+./test_venv/bin/pytest -v test_api.py test_sit.py
+```
+
+**Required Overrides:**
+- `BASE_URL`: URL of the central Manager API.
+- `MQTT_HOST`: Domain of the site-specific Mosquitto broker.
+- `NODE_API`: URL of the site-specific Edge Processor (`/history`).
+- `METRICS_API`: URL of the site-specific Edge Processor (`/metrics`).
+- `REMOTE_TEST`: Set to `true` to enable SSH-based DB updates (targets the central DB server at `10.0.0.66`).
+- `CA_CERT`, `CLIENT_CERT`, `CLIENT_KEY`: Paths to the Root CA and client identity bundle valid for the target site.

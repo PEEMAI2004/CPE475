@@ -5,8 +5,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/potbuddy/manager-api/internal/models"
 )
 
 func setupTestServer(t *testing.T) (*Server, sqlmock.Sqlmock, func()) {
@@ -20,6 +23,19 @@ func setupTestServer(t *testing.T) (*Server, sqlmock.Sqlmock, func()) {
 	return s, mock, func() {
 		db.Close()
 	}
+}
+
+func generateTestToken(secret []byte, role string) string {
+	claims := &models.Claims{
+		Email: "test@example.com",
+		Role:  role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString(secret)
+	return tokenString
 }
 
 func TestGetProfiles(t *testing.T) {
@@ -46,11 +62,14 @@ func TestGetProfiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	req.Header.Set("Authorization", "Bearer "+generateTestToken(s.JWTSecret, "Viewer"))
 
 	rr := httptest.NewRecorder()
-	s.Router.ServeHTTP(rr, req) // Testing the unauthenticated handler directly
+	s.Router.ServeHTTP(rr, req)
 
-	// NOTE: In real tests we'd need to mock authMiddleware or use a helper to generate valid JWTs
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rr.Code)
+	}
 }
 
 func TestUpdateDeviceProfile(t *testing.T) {
@@ -68,7 +87,81 @@ func TestUpdateDeviceProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.SetPathValue("id", "hardware-123")
+	req.Header.Set("Authorization", "Bearer "+generateTestToken(s.JWTSecret, "Super Admin"))
 
 	rr := httptest.NewRecorder()
 	s.Router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rr.Code)
+	}
+}
+
+func TestRegenNodeToken(t *testing.T) {
+	s, mock, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	mock.ExpectExec("UPDATE infrastructure_nodes SET token=\\$1 WHERE id=\\$2").
+		WithArgs(sqlmock.AnyArg(), "1").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	req, err := http.NewRequest("POST", "/api/enrollment/nodes/1/regen-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.SetPathValue("id", "1")
+	req.Header.Set("Authorization", "Bearer "+generateTestToken(s.JWTSecret, "Super Admin"))
+
+	rr := httptest.NewRecorder()
+	s.Router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rr.Code)
+	}
+}
+
+func TestMachineAuthMiddleware(t *testing.T) {
+	s, mock, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Test Node Token
+	mock.ExpectQuery("SELECT name FROM infrastructure_nodes WHERE token = \\$1").
+		WithArgs("pb_node_valid").
+		WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("test-node"))
+
+	req, _ := http.NewRequest("POST", "/api/infrastructure/heartbeat", nil)
+	req.Header.Set("X-PotBuddy-Token", "pb_node_valid")
+
+	rr := httptest.NewRecorder()
+	s.Router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected status 200 for valid node token, got %d", rr.Code)
+	}
+
+	// Test Device Token
+	mock.ExpectQuery("SELECT device_id FROM devices WHERE auth_token = \\$1").
+		WithArgs("pb_dev_valid").
+		WillReturnRows(sqlmock.NewRows([]string{"device_id"}).AddRow("test-device"))
+
+	req, _ = http.NewRequest("POST", "/api/infrastructure/heartbeat", nil)
+	req.Header.Set("Authorization", "Bearer pb_dev_valid")
+
+	rr = httptest.NewRecorder()
+	s.Router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected status 200 for valid device token, got %d", rr.Code)
+	}
+
+	// Test Invalid Token
+	req, _ = http.NewRequest("POST", "/api/infrastructure/heartbeat", nil)
+	req.Header.Set("X-PotBuddy-Token", "pb_invalid")
+
+	rr = httptest.NewRecorder()
+	s.Router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401 for invalid token, got %d", rr.Code)
+	}
 }

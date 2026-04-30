@@ -64,3 +64,8 @@ type Claims struct {
 	Role  string `json:"role"`
 	jwt.RegisteredClaims
 }
+
+type MachineIdentity struct {
+	ID   string
+	Type string // "node" or "device"
+}

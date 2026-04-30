@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Leaf, Cpu, Save, Plus, Trash2, Edit2, Server, Activity, Users, LogOut, ShieldCheck, Key, Eye, EyeOff, Download, BookOpen, Shield } from 'lucide-react';
+import { Leaf, Cpu, Save, Plus, Trash2, Edit2, Server, Activity, Users, LogOut, ShieldCheck, Key, Download, BookOpen, Shield, RefreshCw, Copy } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GoogleOAuthProvider, GoogleLogin } from '@react-oauth/google';
 import type { Profile, Device, ServiceHealth, User, InfrastructureNode, EnrolledDevice } from './api';
@@ -9,7 +9,8 @@ import {
   getUsers, inviteUser, deleteUser,
   getEnrolledNodes, enrollNode, updateEnrolledNode, deleteEnrolledNode,
   getEnrolledDevices, enrollDevice, deleteEnrolledDevice,
-  downloadNodeConfig, downloadBrokerCert
+  downloadNodeConfig, downloadBrokerCert,
+  regenNodeToken, regenDeviceAuthToken
 } from './api';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -235,9 +236,6 @@ function EnrollmentManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   const [editingNodeId, setEditingNodeId] = useState<number | null>(null);
   const [newDevice, setNewDevice] = useState({ device_id: '' });
 
-  // Visibility states
-  const [visibleNodes, setVisibleNodes] = useState<Record<number, boolean>>({});
-  const [visibleDevices, setVisibleDevices] = useState<Record<string, boolean>>({});
   const [showInstructions, setShowInstructions] = useState(false);
 
   useEffect(() => {
@@ -251,14 +249,6 @@ function EnrollmentManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
     } catch (e) {
       console.error(e);
     }
-  };
-
-  const toggleNodeVisibility = (id: number) => {
-    setVisibleNodes(prev => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  const toggleDeviceVisibility = (id: string) => {
-    setVisibleDevices(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
   const handleEnrollNode = async () => {
@@ -327,6 +317,33 @@ function EnrollmentManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
       await deleteEnrolledDevice(id);
       fetchEnrollments();
     }
+  };
+
+  const handleRegenNodeToken = async (id: number) => {
+    if (confirm('Regenerate token for this site? Existing gateway config will need update.')) {
+      try {
+        await regenNodeToken(id);
+        fetchEnrollments();
+      } catch (e) {
+        alert("Failed to regenerate token.");
+      }
+    }
+  };
+
+  const handleRegenDeviceAuthToken = async (id: string) => {
+    if (confirm('Regenerate AuthToken for this device? It will need to be re-provisioned if reset.')) {
+      try {
+        await regenDeviceAuthToken(id);
+        fetchEnrollments();
+      } catch (e) {
+        alert("Failed to regenerate token.");
+      }
+    }
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    alert("Copied to clipboard!");
   };
 
   return (
@@ -418,10 +435,13 @@ function EnrollmentManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <span style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
-                        {visibleNodes[n.id] ? n.token : '••••••••••••••••'}
+                        {'••••••••••••••••'}
                       </span>
-                      <button className="btn-icon" onClick={() => toggleNodeVisibility(n.id)} style={{ background: 'none', border: 'none', color: 'var(--text-sub)', cursor: 'pointer', padding: 0 }}>
-                        {visibleNodes[n.id] ? <EyeOff size={14} /> : <Eye size={14} />}
+                      <button className="btn-icon" title="Copy Token" onClick={() => copyToClipboard(n.token)} style={{ background: 'none', border: 'none', color: 'var(--text-sub)', cursor: 'pointer', padding: 0 }}>
+                        <Copy size={14} />
+                      </button>
+                      <button className="btn-icon" title="Regenerate Token" onClick={() => handleRegenNodeToken(n.id)} style={{ background: 'none', border: 'none', color: 'var(--text-sub)', cursor: 'pointer', padding: 0 }}>
+                        <RefreshCw size={14} />
                       </button>
                     </div>
                   </td>
@@ -468,18 +488,23 @@ function EnrollmentManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
                 <td style={{ fontWeight: 600 }}>{d.device_id}</td>
                 <td>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ fontFamily: 'monospace', color: visibleDevices[d.device_id] ? 'var(--accent)' : 'inherit' }}>
-                      {visibleDevices[d.device_id] ? d.auth_token : '••••••••••••••••'}
+                    <span style={{ fontFamily: 'monospace' }}>
+                      {'••••••••••••••••'}
                     </span>
-                    <button className="btn-icon" onClick={() => toggleDeviceVisibility(d.device_id)} style={{ background: 'none', border: 'none', color: 'var(--text-sub)', cursor: 'pointer', padding: 0 }}>
-                      {visibleDevices[d.device_id] ? <EyeOff size={14} /> : <Eye size={14} />}
+                    <button className="btn-icon" title="Copy Auth Token" onClick={() => copyToClipboard(d.auth_token)} style={{ background: 'none', border: 'none', color: 'var(--text-sub)', cursor: 'pointer', padding: 0 }}>
+                      <Copy size={14} />
+                    </button>
+                    <button className="btn-icon" title="Regenerate AuthToken" onClick={() => handleRegenDeviceAuthToken(d.device_id)} style={{ background: 'none', border: 'none', color: 'var(--text-sub)', cursor: 'pointer', padding: 0 }}>
+                      <RefreshCw size={14} />
                     </button>
                   </div>
                 </td>
                 <td><span className="badge" style={{background: 'rgba(74, 222, 128, 0.1)', color: '#4ade80', border: '1px solid rgba(74, 222, 128, 0.2)'}}>mTLS</span></td>
                 <td style={{ fontSize: '0.85rem' }}>{new Date(d.created_at).toLocaleString()}</td>
                 <td>
-                  <button className="btn danger" style={{ padding: '0.4rem' }} onClick={() => handleDeleteDevice(d.device_id)}><Trash2 size={14} /></button>
+                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                    <button className="btn danger" style={{ padding: '0.4rem' }} onClick={() => handleDeleteDevice(d.device_id)}><Trash2 size={14} /></button>
+                  </div>
                 </td>
               </tr>
             ))}
