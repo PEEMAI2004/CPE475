@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"net/http"
+	"os"
 
 	"github.com/potbuddy/manager-api/internal/ca"
 )
@@ -73,7 +74,25 @@ func (s *Server) setupRoutes() {
 
 	// Serve the React frontend
 	fs := http.FileServer(http.Dir("./frontend/dist"))
-	s.Router.Handle("/", http.StripPrefix("/", fs))
+	s.Router.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// If it's an API request, let the other handlers deal with it
+		if len(r.URL.Path) >= 4 && r.URL.Path[:4] == "/api" {
+			s.Router.ServeHTTP(w, r)
+			return
+		}
+
+		// Check if the file exists in the static directory
+		path := "./frontend/dist" + r.URL.Path
+		_, err := os.Stat(path)
+		if os.IsNotExist(err) || r.URL.Path == "/" {
+			// Fallback to index.html for SPA routing
+			http.ServeFile(w, r, "./frontend/dist/index.html")
+			return
+		}
+
+		// Serve the static file
+		fs.ServeHTTP(w, r)
+	}))
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
