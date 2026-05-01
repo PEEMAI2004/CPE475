@@ -86,10 +86,12 @@ func (s *Server) machineAuthMiddleware(next http.Handler) http.Handler {
 
 		// Check if it's a node token
 		if strings.HasPrefix(token, "pb_node_") {
-			var nodeID string
-			err := s.DB.QueryRow("SELECT name FROM infrastructure_nodes WHERE token = $1", token).Scan(&nodeID)
+			var nodeName string
+			var nodeID int
+			err := s.DB.QueryRow("SELECT id, name FROM infrastructure_nodes WHERE token = $1", token).Scan(&nodeID, &nodeName)
 			if err == nil {
-				identity.ID = nodeID
+				identity.ID = nodeName
+				identity.DBID = nodeID
 				identity.Type = "node"
 			}
 		} else if strings.HasPrefix(token, "pb_dev_") {

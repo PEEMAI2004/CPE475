@@ -1,11 +1,14 @@
 package api
 
 import (
+	"crypto/x509"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/potbuddy/manager-api/internal/models"
@@ -119,6 +122,11 @@ func (s *Server) generateServerCert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var req struct {
+		CSR string `json:"csr"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+
 	dnsNames := []string{}
 	ips := []net.IP{}
 
@@ -134,19 +142,44 @@ func (s *Server) generateServerCert(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Sign
-	certPEM, keyPEM, err := s.CA.SignServerCertificate(target, dnsNames, ips)
+	var certPEM, keyPEM []byte
+	if req.CSR != "" {
+		certPEM, err = s.CA.SignCSR([]byte(req.CSR), []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	} else {
+		// Sign with generated key (Key Escrow - Legacy)
+		certPEM, keyPEM, err = s.CA.SignServerCertificate(target, dnsNames, ips)
+	}
+
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	res := map[string]string{
 		"ca.crt":     string(s.CA.CertPEM),
 		"server.crt": string(certPEM),
-		"server.key": string(keyPEM),
-	})
+	}
+	if keyPEM != nil {
+		res["server.key"] = string(keyPEM)
+	}
+
+	// Add Mosquitto config template
+	res["mosquitto.conf"] = fmt.Sprintf(`allow_anonymous true
+
+# Standard listener
+listener 1883
+
+# mTLS listener
+listener 8883
+cafile /mosquitto/config/ca.crt
+certfile /mosquitto/config/server.crt
+keyfile /mosquitto/config/server.key
+require_certificate true
+use_identity_as_username true
+`)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
 }
 
 func (s *Server) generateClientCert(w http.ResponseWriter, r *http.Request) {
@@ -171,6 +204,11 @@ func (s *Server) generateClientCert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var req struct {
+		CSR string `json:"csr"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+
 	tokenSuffix := n.Token
 	if strings.HasPrefix(tokenSuffix, "pb_node_") {
 		tokenSuffix = tokenSuffix[8:]
@@ -180,19 +218,29 @@ func (s *Server) generateClientCert(w http.ResponseWriter, r *http.Request) {
 	}
 	commonName := fmt.Sprintf("%s-%s", n.Name, tokenSuffix)
 
-	// Sign
-	certPEM, keyPEM, err := s.CA.SignCertificate(commonName)
+	var certPEM, keyPEM []byte
+	if req.CSR != "" {
+		certPEM, err = s.CA.SignCSR([]byte(req.CSR), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+	} else {
+		// Sign with generated key (Key Escrow - Legacy)
+		certPEM, keyPEM, err = s.CA.SignCertificate(commonName)
+	}
+
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	res := map[string]string{
 		"ca.crt":     string(s.CA.CertPEM),
 		"client.crt": string(certPEM),
-		"client.key": string(keyPEM),
-	})
+	}
+	if keyPEM != nil {
+		res["client.key"] = string(keyPEM)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
 }
 
 func (s *Server) getEnrolledDevices(w http.ResponseWriter, r *http.Request) {
@@ -221,21 +269,25 @@ func (s *Server) getEnrolledDevices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) enrollDevice(w http.ResponseWriter, r *http.Request) {
-	var d models.EnrolledDevice
-	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
+	var req struct {
+		DeviceID string `json:"device_id"`
+		CSR      string `json:"csr"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
 
-	if d.DeviceID == "" {
+	if req.DeviceID == "" {
 		http.Error(w, "device_id is required", 400)
 		return
 	}
 
-	d.AuthToken = "pb_dev_" + s.generateToken(16)
+	authToken := "pb_dev_" + s.generateToken(16)
+	var createdAt string
 
 	err := s.DB.QueryRow("INSERT INTO devices (device_id, auth_token) VALUES ($1, $2) RETURNING created_at", 
-		d.DeviceID, d.AuthToken).Scan(&d.CreatedAt)
+		req.DeviceID, authToken).Scan(&createdAt)
 	
 	if err != nil {
 		http.Error(w, err.Error(), 500)
@@ -243,19 +295,28 @@ func (s *Server) enrollDevice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bundle := map[string]string{
-		"device_id":  d.DeviceID,
-		"auth_token": d.AuthToken,
+		"device_id":  req.DeviceID,
+		"auth_token": authToken,
 	}
 
 	if s.CA != nil {
-		certPEM, keyPEM, err := s.CA.SignCertificate(d.DeviceID)
+		var certPEM, keyPEM []byte
+		var err error
+		if req.CSR != "" {
+			certPEM, err = s.CA.SignCSR([]byte(req.CSR), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+		} else {
+			certPEM, keyPEM, err = s.CA.SignCertificate(req.DeviceID)
+		}
+
 		if err != nil {
 			http.Error(w, "Failed to sign certificate: "+err.Error(), 500)
 			return
 		}
 		bundle["ca.crt"] = string(s.CA.CertPEM)
 		bundle["client.crt"] = string(certPEM)
-		bundle["client.key"] = string(keyPEM)
+		if keyPEM != nil {
+			bundle["client.key"] = string(keyPEM)
+		}
 	}
 
 	w.WriteHeader(http.StatusCreated)
@@ -275,6 +336,7 @@ func (s *Server) deleteEnrolledDevice(w http.ResponseWriter, r *http.Request) {
 func (s *Server) bootstrapDevice(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AuthToken string `json:"auth_token"`
+		CSR       string `json:"csr"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", 400)
@@ -296,7 +358,13 @@ func (s *Server) bootstrapDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	certPEM, keyPEM, err := s.CA.SignCertificate(deviceID)
+	var certPEM, keyPEM []byte
+	if req.CSR != "" {
+		certPEM, err = s.CA.SignCSR([]byte(req.CSR), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+	} else {
+		certPEM, keyPEM, err = s.CA.SignCertificate(deviceID)
+	}
+
 	if err != nil {
 		http.Error(w, "Failed to sign certificate: "+err.Error(), 500)
 		return
@@ -306,11 +374,37 @@ func (s *Server) bootstrapDevice(w http.ResponseWriter, r *http.Request) {
 		"device_id":  deviceID,
 		"ca.crt":     string(s.CA.CertPEM),
 		"client.crt": string(certPEM),
-		"client.key": string(keyPEM),
+	}
+	if keyPEM != nil {
+		bundle["client.key"] = string(keyPEM)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(bundle)
+}
+
+func (s *Server) bootstrapNodeConfig(w http.ResponseWriter, r *http.Request) {
+	identity, ok := r.Context().Value("identity").(*models.MachineIdentity)
+	if !ok || identity.Type != "node" {
+		http.Error(w, "Node identity required", http.StatusUnauthorized)
+		return
+	}
+
+	// Use existing download logic but with ID from identity
+	r.SetPathValue("id", strconv.Itoa(identity.DBID))
+	s.downloadNodeConfig(w, r)
+}
+
+func (s *Server) bootstrapBrokerCert(w http.ResponseWriter, r *http.Request) {
+	identity, ok := r.Context().Value("identity").(*models.MachineIdentity)
+	if !ok || identity.Type != "node" {
+		http.Error(w, "Node identity required", http.StatusUnauthorized)
+		return
+	}
+
+	// Use existing server-cert logic but with ID from identity
+	r.SetPathValue("id", strconv.Itoa(identity.DBID))
+	s.generateServerCert(w, r)
 }
 
 func (s *Server) downloadNodeConfig(w http.ResponseWriter, r *http.Request) {
@@ -344,13 +438,27 @@ func (s *Server) downloadNodeConfig(w http.ResponseWriter, r *http.Request) {
 		tokenSuffix = tokenSuffix[:8]
 	}
 
+	// For infrastructure nodes, we use a predictable CN that includes the ID
 	commonName := fmt.Sprintf("node-%d-%s", n.ID, tokenSuffix)
 	mqttBrokerTLS := mqttBroker
-	var certPEM, keyPEM []byte
+	
+	var req struct {
+		CSR string `json:"csr"`
+	}
+	if r.Method == http.MethodPost {
+		json.NewDecoder(r.Body).Decode(&req)
+	}
 
+	var certPEM, keyPEM []byte
 	if s.CA != nil {
 		var err error
-		certPEM, keyPEM, err = s.CA.SignCertificate(commonName)
+		if req.CSR != "" {
+			certPEM, err = s.CA.SignCSR([]byte(req.CSR), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+		} else {
+			// Fallback to Key Escrow if no CSR provided (backward compatibility)
+			certPEM, keyPEM, err = s.CA.SignCertificate(commonName)
+		}
+		
 		if err != nil {
 			http.Error(w, "Failed to sign certificate: "+err.Error(), 500)
 			return
@@ -374,6 +482,12 @@ func (s *Server) downloadNodeConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Customize DSN if database is not local
+	dbHost := "postgresql.iot.kaminjitt.com"
+	if os.Getenv("ENV") == "docker" {
+		dbHost = "postgres"
+	}
+
 	configYaml := fmt.Sprintf(`local_mqtt:
   broker: %q
   client_id: "potbuddy-local-node-%d"
@@ -392,15 +506,18 @@ cloud_mqtt:
 
 http:
   port: 8080
+  ca_file: "ca.crt"
+  cert_file: "client.crt"
+  key_file: "client.key"
 
 store:
   buffer_size: 100
 
 database:
-  dsn: "postgres://postgres:postgres@postgresql.iot.kaminjitt.com:5432/potbuddy?sslmode=disable"
+  dsn: "postgres://postgres:postgres@%s:5432/potbuddy?sslmode=disable"
 
 device_id: %q
-`, mqttBrokerTLS, n.ID, n.ID, commonName)
+`, mqttBrokerTLS, n.ID, n.ID, dbHost, commonName)
 
 	bundle := map[string]string{
 		"config.yaml": configYaml,
@@ -408,7 +525,9 @@ device_id: %q
 	if s.CA != nil {
 		bundle["ca.crt"] = string(s.CA.CertPEM)
 		bundle["client.crt"] = string(certPEM)
-		bundle["client.key"] = string(keyPEM)
+		if keyPEM != nil {
+			bundle["client.key"] = string(keyPEM)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

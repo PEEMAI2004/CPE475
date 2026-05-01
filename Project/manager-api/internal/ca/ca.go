@@ -107,6 +107,46 @@ func (ca *CA) SignServerCertificate(commonName string, dnsNames []string, ipAddr
 	return ca.sign(commonName, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, dnsNames, ipAddresses)
 }
 
+func (ca *CA) SignCSR(csrPEM []byte, extKeyUsage []x509.ExtKeyUsage) (certPEM []byte, err error) {
+	block, _ := pem.Decode(csrPEM)
+	if block == nil || block.Type != "CERTIFICATE REQUEST" {
+		return nil, fmt.Errorf("invalid CSR PEM")
+	}
+
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := csr.CheckSignature(); err != nil {
+		return nil, err
+	}
+
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, err
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject:      csr.Subject,
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().AddDate(1, 0, 0),
+		ExtKeyUsage:  extKeyUsage,
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		DNSNames:     csr.DNSNames,
+		IPAddresses:  csr.IPAddresses,
+	}
+
+	certBytes, err := x509.CreateCertificate(rand.Reader, template, ca.Cert, csr.PublicKey, ca.Key)
+	if err != nil {
+		return nil, err
+	}
+
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certBytes})
+	return certPEM, nil
+}
+
 func (ca *CA) sign(commonName string, extKeyUsage []x509.ExtKeyUsage, dnsNames []string, ipAddresses []net.IP) (certPEM []byte, keyPEM []byte, err error) {
 	clientKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

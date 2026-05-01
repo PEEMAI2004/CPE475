@@ -69,11 +69,43 @@ systemctl status potbuddy-manager
 
 ### 4. Edge Processor Deployment
 These servers intercept local MQTT devices and relay them.
-1. **Download Node Bundle**: Use the Manager Dashboard to enroll the node and download the configuration bundle.
-2. **Deploy Certs**: Upload `ca.crt`, `client.crt`, and `client.key` to the server (typically in `/etc/potbuddy/certs/`).
-3. **Configuration**: Create a customized `config.yaml`.
-   - Set `validate_device_id: true` (or environment variable `VALIDATE_DEVICE_ID=true`) to enforce that the certificate Common Name matches the JSON payload `device_id`.
+
+**Enrollment (Zero-Trust CSR):**
+To ensure zero-trust security, private keys are generated locally at the edge and never leave the server.
+1. **Compile Enrollment Tool**:
+   ```bash
+   cd local-node
+   go build -o bin/enroll ./cmd/enroll
+   ```
+2. **Perform Enrollment**:
+   Obtain the **Site Token** from the Manager UI. Run the enrollment tool on the target edge server:
+   ```bash
+   ./bin/enroll -token <SITE_TOKEN> -url http://<MANAGER_IP>:8081
+   ```
+   This command generates `client.key` (locally), `client.csr`, and downloads the signed `client.crt`, Root `ca.crt`, and a customized `config.yaml`.
+
+3. **Deploy**: Move the generated files to `/opt/potbuddy/local-node/`.
 4. **Run**: Start the `node-linux` binary as a `systemd` service. It will now serve HTTPS on port 8080 with mandatory mTLS.
+
+### 5. Local MQTT Broker Deployment (Secure mTLS)
+To secure the local site broker, you must enroll it as a Server and use the `enroll` tool to obtain its signed identity.
+
+1. **Enroll Broker**: In the Manager UI, ensure the site's **MQTT Address** is set correctly.
+2. **Run Enrollment Tool**: On the broker server, run the enrollment tool with `-type mqtt`:
+   ```bash
+   ./bin/enroll -type mqtt -token <SITE_TOKEN> -cn <BROKER_DOMAIN_OR_IP> -url http://<MANAGER_IP>:8081
+   ```
+   This generates `server.key` (locally), `server.csr`, and downloads:
+   - `server.crt` (Signed Server Certificate with SANs)
+   - `ca.crt` (Root CA)
+   - `mosquitto.conf` (Pre-configured mTLS template)
+
+3. **Configure Mosquitto**:
+   - Move the certificates to `/etc/mosquitto/certs/`.
+   - Apply the `mosquitto.conf` template to your configuration directory.
+   - Restart the service: `sudo systemctl restart mosquitto`.
+
+4. **Verify**: Ensure the Local Node can connect to this broker using its own mTLS client certificate (obtained in Step 4).
 
 ---
 
@@ -96,12 +128,6 @@ cd Project/
 docker compose up --build -d
 ```
 
-This single command spins up:
-1. `eclipse-mosquitto` broker on Port `1884`.
-2. `postgres:17-alpine` on Port `5433` (pre-seeded with `init.sql`).
-3. The `local-node` Go processor container.
-4. The `manager-api` container listening on Port `8081`.
-
 ### 3. Teardown
 ```bash
 docker compose down -v
@@ -115,7 +141,7 @@ PotBuddy uses a centralized monitoring stack to aggregate metrics from all distr
 Prometheus acts as the central scraper. It is typically deployed in the cloud or a central management site.
 
 1. **Installation**: Install Prometheus using your package manager or Docker.
-2. **Identity**: Enroll Prometheus as a "Node" in the Manager Dashboard to download its mTLS client certificates (`ca.crt`, `prometheus.crt`, `prometheus.key`).
+2. **Identity**: Enroll Prometheus as a "Node" in the Manager Dashboard and use the `enroll` tool to generate its unique mTLS credentials (`ca.crt`, `prometheus.crt`, `prometheus.key`).
 3. **Configuration**: Mount these certificates into `/etc/prometheus/certs/` and update `prometheus.yml`:
    ```yaml
    scrape_configs:

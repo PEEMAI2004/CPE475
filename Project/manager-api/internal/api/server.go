@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/potbuddy/manager-api/internal/ca"
 )
@@ -56,8 +57,10 @@ func (s *Server) setupRoutes() {
 
 	// Phase 4: Bootstrapping (Public endpoint, secured by AuthToken)
 	s.Router.HandleFunc("POST /api/enrollment/bootstrap", s.bootstrapDevice)
+	s.Router.Handle("POST /api/enrollment/bootstrap/node", s.machineAuthMiddleware(http.HandlerFunc(s.bootstrapNodeConfig)))
+	s.Router.Handle("POST /api/enrollment/bootstrap/mqtt", s.machineAuthMiddleware(http.HandlerFunc(s.bootstrapBrokerCert)))
 
-	s.Router.Handle("GET /api/enrollment/nodes/{id}/config", s.authMiddleware(s.roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(s.downloadNodeConfig))))
+	s.Router.Handle("/api/enrollment/nodes/{id}/config", s.authMiddleware(s.roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(s.downloadNodeConfig))))
 	s.Router.Handle("POST /api/enrollment/nodes/{id}/server-cert", s.authMiddleware(s.roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(s.generateServerCert))))
 	s.Router.Handle("POST /api/enrollment/nodes/{id}/client-cert", s.authMiddleware(s.roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(s.generateClientCert))))
 
@@ -71,30 +74,23 @@ func (s *Server) setupRoutes() {
 	s.Router.Handle("GET /api/users", s.authMiddleware(s.roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(s.getUsers))))
 	s.Router.Handle("POST /api/users", s.authMiddleware(s.roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(s.inviteUser))))
 	s.Router.Handle("DELETE /api/users/{id}", s.authMiddleware(s.roleMiddleware([]string{"Super Admin"}, http.HandlerFunc(s.deleteUser))))
-
-	// Serve the React frontend
-	fs := http.FileServer(http.Dir("./frontend/dist"))
-	s.Router.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// If it's an API request, let the other handlers deal with it
-		if len(r.URL.Path) >= 4 && r.URL.Path[:4] == "/api" {
-			s.Router.ServeHTTP(w, r)
-			return
-		}
-
-		// Check if the file exists in the static directory
-		path := "./frontend/dist" + r.URL.Path
-		_, err := os.Stat(path)
-		if os.IsNotExist(err) || r.URL.Path == "/" {
-			// Fallback to index.html for SPA routing
-			http.ServeFile(w, r, "./frontend/dist/index.html")
-			return
-		}
-
-		// Serve the static file
-		fs.ServeHTTP(w, r)
-	}))
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.Router.ServeHTTP(w, r)
+	if strings.HasPrefix(r.URL.Path, "/api") {
+		s.Router.ServeHTTP(w, r)
+		return
+	}
+
+	// Serve the React frontend
+	path := "./frontend/dist" + r.URL.Path
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) || info.IsDir() {
+		// Fallback to index.html for SPA routing or directory requests
+		http.ServeFile(w, r, "./frontend/dist/index.html")
+		return
+	}
+
+	// Serve the static file directly
+	http.ServeFile(w, r, path)
 }

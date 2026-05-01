@@ -2,6 +2,11 @@ import requests
 import time
 import pytest
 import os
+from cryptography import x509
+from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 # Configuration from environment or defaults
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8081/api")
@@ -31,6 +36,19 @@ def viewer_headers():
         "Authorization": f"Bearer {VIEWER_TOKEN}",
         "Content-Type": "application/json"
     }
+
+def generate_csr(common_name):
+    """Generates a private key and a CSR for testing"""
+    key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
+    csr = x509.CertificateSigningRequestBuilder().subject_name(x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, common_name),
+    ])).sign(key, hashes.SHA256())
+    
+    csr_pem = csr.public_bytes(serialization.Encoding.PEM).decode()
+    return csr_pem
 
 def test_rbac_super_admin_access(api_headers):
     """TC-RBAC-01: Verify Super Admin has access to all management endpoints"""
@@ -99,6 +117,35 @@ def test_infrastructure_node_lifecycle(api_headers):
     resp = requests.delete(f"{BASE_URL}/enrollment/nodes/{node_id}", headers=api_headers)
     assert resp.status_code == 200
 
+def test_csr_node_enrollment(api_headers):
+    """Verify that a node can enroll using a CSR (No Key Escrow)"""
+    # 1. Create a node
+    node_data = {"name": "CSR-Node", "site_id": 1, "address": "csr.node.com"}
+    resp = requests.post(f"{BASE_URL}/enrollment/nodes", headers=api_headers, json=node_data)
+    node_id = resp.json()['id']
+
+    # 2. Generate CSR and request Client Certificate
+    csr = generate_csr("CSR-Node-Client")
+    resp = requests.post(f"{BASE_URL}/enrollment/nodes/{node_id}/client-cert", headers=api_headers, json={"csr": csr})
+    
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "client.crt" in data
+    assert "ca.crt" in data
+    assert "client.key" not in data # CRITICAL: No private key returned
+
+    # 3. Generate CSR and request Server Certificate
+    csr_server = generate_csr("csr.node.com")
+    resp = requests.post(f"{BASE_URL}/enrollment/nodes/{node_id}/server-cert", headers=api_headers, json={"csr": csr_server})
+    
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "server.crt" in data
+    assert "server.key" not in data # CRITICAL: No private key returned
+
+    # Cleanup
+    requests.delete(f"{BASE_URL}/enrollment/nodes/{node_id}", headers=api_headers)
+
 def test_node_token_regeneration_forbidden(site_admin_headers, api_headers):
     """TC-NODE-07: Verify Site Admin cannot regenerate node tokens"""
     # 1. Create a node as Super Admin
@@ -147,6 +194,37 @@ def test_device_bootstrap_lifecycle(api_headers):
     # Cleanup
     resp = requests.delete(f"{BASE_URL}/enrollment/devices/{dev_id}", headers=api_headers)
     assert resp.status_code == 200
+
+def test_csr_device_enrollment(api_headers):
+    """Verify that a device can enroll using a CSR"""
+    dev_id = f"csr-dev-{int(time.time())}"
+    csr = generate_csr(dev_id)
+
+    # 1. Register with CSR
+    resp = requests.post(f"{BASE_URL}/enrollment/devices", headers=api_headers, json={
+        "device_id": dev_id,
+        "csr": csr
+    })
+    
+    assert resp.status_code == 201
+    data = resp.json()
+    assert "client.crt" in data
+    assert "client.key" not in data # CRITICAL
+
+    # 2. Bootstrap with CSR
+    auth_token = data['auth_token']
+    resp = requests.post(f"{BASE_URL}/enrollment/bootstrap", json={
+        "auth_token": auth_token,
+        "csr": csr
+    })
+    
+    assert resp.status_code in [200, 503]
+    if resp.status_code == 200:
+        assert "client.crt" in resp.json()
+        assert "client.key" not in resp.json()
+
+    # Cleanup
+    requests.delete(f"{BASE_URL}/enrollment/devices/{dev_id}", headers=api_headers)
 
 def test_device_token_regeneration_forbidden(viewer_headers, api_headers):
     """TC-DEV-06: Verify Viewer cannot regenerate device tokens"""

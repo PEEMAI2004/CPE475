@@ -88,18 +88,24 @@ Environment=ENABLE_CA=true
 ### B. MQTT Broker (mTLS Listener)
 To secure a new site broker (e.g., Site 2):
 1. **Enroll**: Add the site in the **Enrollment** tab of the Dashboard.
-2. **Download Server Bundle**: Click the **Shield icon** (🛡️) next to the site to download `broker-id-cert-bundle.json`.
-3. **Unpack & Configure**: Use `jq` to extract `ca.crt`, `server.crt`, and `server.key` into `/etc/mosquitto/certs/`.
+2. **Obtain Identity**: You can either download a server bundle (legacy) or submit a **CSR** (Certificate Signing Request) to the Manager API.
+3. **Configure**: Extract or save `ca.crt`, `server.crt`, and `server.key` into `/etc/mosquitto/certs/`.
 4. **Mosquitto**: Enable the port 8883 listener with `require_certificate true`.
 
 ### C. Edge Processor (Local Node)
-1. **Download Node Bundle**: In the **Enrollment** tab, click the **Download icon** (📥) to get `node-id-config-bundle.json`.
-2. **Deploy**: Extract the `config.yaml` and mTLS certificates to the edge server.
-3. **Run**: Start the `local-node` binary. It serves HTTPS with mTLS on port 8080 and connects to the local broker on 8883.
+PotBuddy uses a Zero-Trust enrollment flow where private keys never leave the edge server.
+1. **Enroll**: Add the node in the Dashboard and obtain its **Site Token**.
+2. **Run Enrollment CLI**: Use the `enroll` tool on the target edge server:
+   ```bash
+   ./bin/enroll -token <SITE_TOKEN> -url http://manager.iot.kaminjitt.com
+   ```
+   This generates a local private key and obtains a CA-signed certificate and configuration.
+3. **Run**: Start the `local-node` binary. It automatically uses the local certificates to connect to the broker and serve the mTLS metrics API.
 
 ### D. Prometheus Scraper
-1. **Generate Scraper Identity**: Enroll "Prometheus" as a node in the Manager UI.
-2. **Configure Scrape Job**:
+1. **Enroll Scraper**: Enroll "Prometheus" as a node in the Manager UI.
+2. **Obtain Identity**: Use the `enroll` tool (see Step C) on the Prometheus server to generate its unique mTLS identity.
+3. **Configure Scrape Job**:
    ```yaml
    - job_name: 'potbuddy-local-node'
      scheme: https

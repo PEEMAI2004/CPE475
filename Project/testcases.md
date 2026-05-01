@@ -22,6 +22,7 @@ This document outlines the test cases designed to cover all features and edge ca
 | TC-NODE-05 | Node Deletion | Automated | API | `test_infrastructure_node_lifecycle` |
 | TC-NODE-06 | Token Regeneration (Valid) | Automated | API | `test_infrastructure_node_lifecycle` |
 | TC-NODE-07 | Token Regeneration (Forbidden) | Automated | API | `test_node_token_regeneration_forbidden` |
+| TC-NODE-08 | CSR-based Enrollment (No Escrow) | Automated | API | `test_csr_node_enrollment` |
 | **3. Device & Bootstrap** | | | | |
 | TC-DEV-01 | Successful Registration (CA Enabled) | Automated | API | `test_device_bootstrap_lifecycle` |
 | TC-DEV-02 | Successful Registration (CA Disabled) | Automated | API | `test_device_bootstrap_lifecycle` |
@@ -29,14 +30,17 @@ This document outlines the test cases designed to cover all features and edge ca
 | TC-DEV-04 | Empty Device ID | Automated | API | `test_device_registration_negative` |
 | TC-DEV-05 | AuthToken Regeneration (Valid) | Automated | API | `test_device_bootstrap_lifecycle` |
 | TC-DEV-06 | AuthToken Regeneration (Forbidden) | Automated | API | `test_device_token_regeneration_forbidden` |
+| TC-DEV-07 | CSR-based Registration (No Escrow) | Automated | API | `test_csr_device_enrollment` |
 | TC-BOOT-01 | Valid Bootstrapping | Automated | API | `test_device_bootstrap_lifecycle` |
 | TC-BOOT-02 | Invalid/Fake AuthToken | Automated | API | `test_bootstrap_invalid_token` |
 | TC-BOOT-03 | Bootstrapping with CA Disabled | Automated | API | `test_device_bootstrap_lifecycle` |
+| TC-BOOT-04 | Token-based CSR Bootstrapping | Automated | CLI | Manual `enroll` Verification |
 | **4. MQTT & mTLS** | | | | |
 | TC-MTLS-01 | Valid Client Connection | Manual | SIT | - |
 | TC-MTLS-02 | No Certificate Provided | Manual | SIT | - |
 | TC-MTLS-03 | Invalid/Self-Signed Certificate | Manual | SIT | - |
 | TC-MTLS-04 | Identity Mapping | Manual | SIT | - |
+| TC-MTLS-05 | Token-based MQTT Bootstrapping | Automated | CLI | Manual `enroll` Verification |
 | **5. Processing & Validation**| | | | |
 | TC-VAL-01 | Matching Identity | Automated | SIT | `test_sit_identity_spoof_detection` |
 | TC-VAL-02 | Spoofed Identity (Valid. Enabled) | Automated | SIT | `test_sit_identity_spoof_detection` |
@@ -56,122 +60,206 @@ This document outlines the test cases designed to cover all features and edge ca
 | **7. Cross-Environment Execution** | | | | |
 | TC-ENV-01 | Local Docker Compose | Automated | ALL | Supported via Default Config |
 | TC-ENV-02 | Remote Infrastructure | Automated | ALL | Supported via Env Overrides |
+| **8. End-to-End Lifecycle** | | | | |
+| TC-E2E-01 | Node Lifecycle E2E | Manual | CLI/UI | - |
 
 ---
 
 ## 1. Authentication & RBAC (Manager API)
 
 ### 1.1 Google SSO Login
-- **TC-AUTH-01: Valid Login.** Attempt login with a Google account registered in the `users` table. 
-  - *Expected:* Success, returns JWT token and user details.
-- **TC-AUTH-02: Unregistered User.** Attempt login with a valid Google account NOT in the `users` table. 
-  - *Expected:* `403 Forbidden` ("User not invited").
-- **TC-AUTH-03: Invalid ID Token.** Send a malformed or expired Google ID token to the `/api/auth/login` endpoint. 
+- **TC-AUTH-01: Valid Login.**
+  1. Open the web dashboard login page.
+  2. Click "Login with Google".
+  3. Authenticate with an account present in the `users` table.
+  - *Expected:* Successful login, redirects to dashboard.
+- **TC-AUTH-02: Unregistered User.**
+  1. Open the web dashboard login page.
+  2. Click "Login with Google".
+  3. Authenticate with a valid Google account NOT present in the `users` table.
+  - *Expected:* `403 Forbidden` error shown.
+- **TC-AUTH-03: Invalid ID Token.**
+  1. Send POST request to `/api/auth/login` with a malformed `idToken`.
   - *Expected:* `401 Unauthorized`.
 
 ### 1.2 Role-Based Access Control (RBAC)
-- **TC-RBAC-01: Super Admin Permissions.** Verify Super Admin can access all endpoints (Users, Nodes, Devices, Profiles, Infra).
-- **TC-RBAC-02: Site Admin Permissions.** Verify Site Admin can manage Devices and Profiles but is blocked from managing Users or Infrastructure Nodes (`403 Forbidden`).
-- **TC-RBAC-03: Viewer Permissions.** Verify Viewer can only GET data (Profiles, Devices, Infra) and is blocked from POST/PUT/DELETE operations (`403 Forbidden`).
-- **TC-RBAC-04: Invalid/Expired JWT.** Access any protected endpoint with an expired or tampered JWT. 
+- **TC-RBAC-01: Super Admin Permissions.**
+  1. Authenticate as Super Admin.
+  2. Access `/users`, `/profiles`, `/devices`, `/infrastructure`, `/enrollment/nodes`, `/enrollment/devices`.
+  - *Expected:* All endpoints return `200 OK`.
+- **TC-RBAC-02: Site Admin Permissions.**
+  1. Authenticate as Site Admin.
+  2. Access `/devices`, `/profiles`.
+  3. Access `/users`, `/enrollment/nodes`.
+  - *Expected:* Step 2 returns `200 OK`, Step 3 returns `403 Forbidden`.
+- **TC-RBAC-03: Viewer Permissions.**
+  1. Authenticate as Viewer.
+  2. Access `/devices`, `/profiles`.
+  3. Access `/users`, `/enrollment/nodes`.
+  4. Attempt POST to `/enrollment/devices`.
+  - *Expected:* Step 2 returns `200 OK`, Step 3 & 4 return `403 Forbidden`.
+- **TC-RBAC-04: Invalid/Expired JWT.**
+  1. Send request to protected endpoint with an invalid or expired token.
   - *Expected:* `401 Unauthorized`.
 
 ---
 
 ## 2. Infrastructure Enrollment (Edge Nodes)
 
-- **TC-NODE-01: Successful Enrollment.** Register a new node with valid data (Name, Site ID, Address). 
-  - *Expected:* `201 Created`, node appears in list, `token` generated.
-- **TC-NODE-02: Missing Required Fields.** Attempt to register a node with missing name or address. 
+- **TC-NODE-01: Successful Enrollment.**
+  1. POST to `/api/enrollment/nodes` with valid `name`, `site_id`, `address`.
+  - *Expected:* `201 Created`, returns node token.
+- **TC-NODE-02: Missing Required Fields.**
+  1. POST to `/api/enrollment/nodes` with missing fields.
   - *Expected:* `400 Bad Request`.
-- **TC-NODE-03: Config Download (Valid).** Download `config.yaml` for an existing node. 
-  - *Expected:* Returns YAML file containing the correct `device_id`, `broker` address, and mTLS paths.
-- **TC-NODE-04: Config Download (Invalid Node).** Request config for a non-existent node ID. 
+- **TC-NODE-03: Config Download (Valid).**
+  1. GET `/api/enrollment/nodes/{id}/config`.
+  - *Expected:* Returns bundle containing `config.yaml` and mTLS certificates.
+- **TC-NODE-04: Config Download (Invalid Node).**
+  1. GET `/api/enrollment/nodes/99999/config`.
   - *Expected:* `404 Not Found`.
-- **TC-NODE-05: Node Deletion.** Delete an existing node. 
-  - *Expected:* `200 OK`, node removed from the database.
-- **TC-NODE-06: Token Regeneration (Valid).** Super Admin regenerates the node token.
-  - *Expected:* `200 OK`, returns new `pb_node_` token, database updated.
-- **TC-NODE-07: Token Regeneration (Forbidden).** Site Admin or Viewer attempts to regenerate node token.
+- **TC-NODE-05: Node Deletion.**
+  1. DELETE `/api/enrollment/nodes/{id}`.
+  - *Expected:* `200 OK`, node removed from DB.
+- **TC-NODE-06: Token Regeneration (Valid).**
+  1. POST to `/api/enrollment/nodes/{id}/regen-token`.
+  - *Expected:* `200 OK`, returns a new token.
+- **TC-NODE-07: Token Regeneration (Forbidden).**
+  1. Authenticate as Site Admin.
+  2. Attempt POST to `/api/enrollment/nodes/{id}/regen-token`.
   - *Expected:* `403 Forbidden`.
+- **TC-NODE-08: CSR-based Enrollment (No Escrow).**
+  1. POST to `/api/enrollment/nodes/{id}/client-cert` with a valid CSR.
+  - *Expected:* `200 OK`, returns signed certificate without private key.
 
 ---
 
 ## 3. IoT Device Enrollment & Bootstrapping
 
 ### 3.1 Device Registration
-- **TC-DEV-01: Successful Registration (CA Enabled).** Register a device. 
-  - *Expected:* Returns `201 Created` with a JSON bundle containing `device_id`, `auth_token`, `ca.crt`, `client.crt`, and `client.key`.
-- **TC-DEV-02: Successful Registration (CA Disabled).** Register a device when `ENABLE_CA=false`. 
-  - *Expected:* Returns `201 Created` with only `device_id` and `auth_token` (no certs).
-- **TC-DEV-03: Duplicate Device ID.** Attempt to register a device with an already existing ID. 
-  - *Expected:* `500 Internal Server Error` (Database unique constraint violation).
-- **TC-DEV-04: Empty Device ID.** Attempt to register without providing an ID. 
+- **TC-DEV-01: Successful Registration (CA Enabled).**
+  1. POST to `/api/enrollment/devices` with `device_id`.
+  - *Expected:* `201 Created`, returns full certificate bundle.
+- **TC-DEV-02: Successful Registration (CA Disabled).**
+  1. Set `ENABLE_CA=false`.
+  2. POST to `/api/enrollment/devices`.
+  - *Expected:* `201 Created`, returns `auth_token` only.
+- **TC-DEV-03: Duplicate Device ID.**
+  1. POST twice with same `device_id`.
+  - *Expected:* `500 Internal Server Error` (unique constraint).
+- **TC-DEV-04: Empty Device ID.**
+  1. POST with empty `device_id`.
   - *Expected:* `400 Bad Request`.
+- **TC-DEV-05: AuthToken Regeneration (Valid).**
+  1. POST to `/api/enrollment/devices/{id}/regen-token`.
+  - *Expected:* `200 OK`, returns new token.
+- **TC-DEV-06: AuthToken Regeneration (Forbidden).**
+  1. Authenticate as Viewer.
+  2. POST to `/api/enrollment/devices/{id}/regen-token`.
+  - *Expected:* `403 Forbidden`.
+- **TC-DEV-07: CSR-based Registration (No Escrow).**
+  1. POST to `/api/enrollment/devices` with `device_id` and a CSR.
+  - *Expected:* `201 Created`, returns signed certificate without private key.
 
 ### 3.2 HTTPS Bootstrapping (`/api/enrollment/bootstrap`)
-- **TC-BOOT-01: Valid Bootstrapping.** Device calls endpoint with a valid `AuthToken`. 
-  - *Expected:* Returns mTLS certificate bundle.
-- **TC-BOOT-02: Invalid/Fake AuthToken.** Device calls endpoint with a random string. 
+- **TC-BOOT-01: Valid Bootstrapping.**
+  1. POST to `/api/enrollment/bootstrap` with valid `auth_token`.
+  - *Expected:* `200 OK`, returns certificate bundle.
+- **TC-BOOT-02: Invalid/Fake AuthToken.**
+  1. POST with invalid `auth_token`.
   - *Expected:* `401 Unauthorized`.
-- **TC-BOOT-03: Bootstrapping with CA Disabled.** Device calls endpoint when server is not configured to issue certs. 
+- **TC-BOOT-03: Bootstrapping with CA Disabled.**
+  1. Disable CA.
+  2. POST to bootstrap endpoint.
   - *Expected:* `503 Service Unavailable`.
+- **TC-BOOT-04: Token-based CSR Bootstrapping.**
+  1. Create a node in the dashboard to obtain a site token.
+  2. Run `./enroll -token pb_node_...` on an edge server.
+  - *Expected:* Local private key generated, CSR submitted via `X-PotBuddy-Token` header, signed certificate and customized `config.yaml` returned and saved locally.
 
 ---
 
 ## 4. MQTT & mTLS Security (Zero-Trust)
 
-- **TC-MTLS-01: Valid Client Connection.** Connect to Mosquitto (port 8883) using the CA, client cert, and private key issued by the Manager API. 
-  - *Expected:* Connection established successfully.
-- **TC-MTLS-02: No Certificate Provided.** Connect to port 8883 without supplying a client certificate. 
-  - *Expected:* Connection rejected by broker (`tlsv1 alert unknown ca` or similar).
-- **TC-MTLS-03: Invalid/Self-Signed Certificate.** Connect using a certificate not signed by the Manager API's Root CA. 
+- **TC-MTLS-01: Valid Client Connection.**
+  1. Connect to port 8883 with valid CA-signed cert/key.
+  - *Expected:* Successful mTLS handshake and connection.
+- **TC-MTLS-02: No Certificate Provided.**
+  1. Attempt connection to 8883 without client certificate.
   - *Expected:* Connection rejected by broker.
-- **TC-MTLS-04: Identity Mapping.** Publish a message and check Mosquitto logs. 
-  - *Expected:* Log shows `as <client-id> (..., u'<cert-common-name>')`, proving CN maps to username.
+- **TC-MTLS-03: Invalid/Self-Signed Certificate.**
+  1. Connect with certificate not signed by the Manager CA.
+  - *Expected:* Connection rejected by broker.
+- **TC-MTLS-04: Identity Mapping.**
+  1. Connect with cert `CN=device-01`.
+  2. Verify broker logs show mapping to identity `device-01`.
+  - *Expected:* CN is correctly mapped to the session identity.
+- **TC-MTLS-05: Token-based MQTT Bootstrapping.**
+  1. Obtain a site token from the dashboard.
+  2. Run `./enroll -type mqtt -token pb_node_... -cn BROKER_IP`.
+  - *Expected:* Local `server.key` generated; signed `server.crt` and `mosquitto.conf` returned and saved locally.
 
 ---
 
 ## 5. Local Node Processing & Validation
 
 ### 5.1 Payload Identity Validation
-- **TC-VAL-01: Matching Identity.** Send payload where JSON `device_id` matches the MQTT Topic (which is restricted by the certificate CN). 
-  - *Expected:* Payload processed normally.
-- **TC-VAL-02: Spoofed Identity (Validation Enabled).** With `VALIDATE_DEVICE_ID=true`, send payload where JSON `device_id` does NOT match the topic. 
-  - *Expected:* Payload dropped, `SECURITY ALERT` logged.
-- **TC-VAL-03: Spoofed Identity (Validation Disabled).** With `VALIDATE_DEVICE_ID=false`, send spoofed payload. 
-  - *Expected:* Payload processed (fallback mode).
+- **TC-VAL-01: Matching Identity.**
+  1. Publish to `potbuddy/dev-01/raw` with JSON `{"device_id": "dev-01"}`.
+  - *Expected:* Payload accepted and processed.
+- **TC-VAL-02: Spoofed Identity (Validation Enabled).**
+  1. Set `VALIDATE_DEVICE_ID=true`.
+  2. Publish to `potbuddy/dev-01/raw` with JSON `{"device_id": "attacker"}`.
+  - *Expected:* Payload dropped; SECURITY ALERT logged.
+- **TC-VAL-03: Spoofed Identity (Validation Disabled).**
+  1. Set `VALIDATE_DEVICE_ID=false`.
+  2. Publish with mismatched ID.
+  - *Expected:* Payload processed (identity check bypassed).
 
 ### 5.2 Sensor Data Parsing & Enrichment
-- **TC-PROC-01: Valid Full Payload.** Send JSON with `light`, `temp`, `hum`, `soil`. 
-  - *Expected:* Parsed successfully, pushed to ring buffer, published to `processed` topic.
-- **TC-PROC-02: Missing Optional Fields (DHT Error).** Send JSON missing `temp` and `hum`. 
-  - *Expected:* Parsed successfully, evaluates available fields, marks missing fields gracefully.
-- **TC-PROC-03: Invalid JSON.** Send malformed JSON payload. 
-  - *Expected:* Dropped, `parse error` logged.
+- **TC-PROC-01: Valid Full Payload.**
+  1. Publish JSON with `light`, `temp`, `hum`, `soil`.
+  - *Expected:* Parsed successfully; status updated.
+- **TC-PROC-02: Missing Optional Fields.**
+  1. Publish JSON missing `temp` and `hum`.
+  - *Expected:* Parsed successfully; missing fields marked as `null`.
+- **TC-PROC-03: Invalid JSON.**
+  1. Publish malformed JSON string.
+  - *Expected:* Payload dropped; parse error logged.
 
 ### 5.3 Health Logic Evaluation (Thresholds)
-- **TC-EVAL-01: All Healthy.** All sensor values fall within the `inner_low` and `inner_high` bounds. 
+- **TC-EVAL-01: All Healthy.**
+  1. Send sensor data within all healthy ranges.
   - *Expected:* Overall status: `healthy`.
-- **TC-EVAL-02: Warning Range.** One sensor falls outside `inner` bounds but inside `outer` bounds. 
+- **TC-EVAL-02: Warning Range.**
+  1. Send sensor data in warning range.
   - *Expected:* Overall status: `warning`.
-- **TC-EVAL-03: Critical Range.** One sensor falls outside the `outer` bounds. 
+- **TC-EVAL-03: Critical Range.**
+  1. Send sensor data in critical range.
   - *Expected:* Overall status: `critical`.
-- **TC-EVAL-04: Boundary Values.** Test values exactly matching the boundary limits (e.g., exactly `inner_low`). 
-  - *Expected:* Handled correctly based on inclusive/exclusive logic operators.
+- **TC-EVAL-04: Boundary Values.**
+  1. Send sensor data exactly at threshold boundary.
+  - *Expected:* Evaluated correctly based on logic operators.
 
 ---
 
 ## 6. System Infrastructure & Monitoring
 
-- **TC-INFRA-01: Auto-Registration.** Send an MQTT payload for a completely unknown device. 
-  - *Expected:* `db.RegisterDevice()` automatically inserts it into the database with the `default` profile.
-- **TC-INFRA-02: Online Watchdog.** Device stops sending payloads. 
-  - *Expected:* After 30 seconds, Prometheus metric `potbuddy_device_online` drops to 0, device appears offline in Dashboard.
-- **TC-INFRA-03: Service Health Check.** Hit the `/api/infrastructure` endpoint. 
-  - *Expected:* Returns real-time TCP/HTTP health status for DB, Manager, Scrapers, and registered Edge Nodes.
-- **TC-INFRA-04: Database Polling.** Update a profile threshold in the database. 
-  - *Expected:* Local node's caching loop picks up the change within 1 minute and applies it to incoming payloads automatically.
+- **TC-INFRA-01: Auto-Registration.**
+  1. Publish data for an unknown device ID.
+  - *Expected:* Device automatically appears in Manager API device list.
+- **TC-INFRA-02: Online Watchdog.**
+  1. Send data to mark device online.
+  2. Stop sending data for 30+ seconds.
+  - *Expected:* Metrics/API show device as offline.
+- **TC-INFRA-03: Service Health Check.**
+  1. GET `/api/infrastructure`.
+  - *Expected:* Returns list of services with "online" status.
+- **TC-INFRA-04: Database Polling.**
+  1. Update profile threshold in DB.
+  2. Wait 60s for node poller.
+  3. Verify new threshold applies to incoming data.
+  - *Expected:* Node uses updated thresholds without restart.
 
 ---
 
@@ -217,3 +305,20 @@ METRICS_API=https://debian-1.iot.kaminjitt.com:8080/metrics \
 - `METRICS_API`: URL of the site-specific Edge Processor (`/metrics`).
 - `REMOTE_TEST`: Set to `true` to enable SSH-based DB updates (targets the central DB server at `10.0.0.66`).
 - `CA_CERT`, `CLIENT_CERT`, `CLIENT_KEY`: Paths to the Root CA and client identity bundle valid for the target site.
+
+---
+
+## 8. End-to-End Lifecycle
+
+- **TC-E2E-01: Node Lifecycle E2E.**
+  1. **Node Creation:** Create a new node in the Manager UI.
+  2. **Initial Enrollment:** Run `./enroll -token <TOKEN>` and `./enroll -type mqtt -token <TOKEN> -cn localhost`.
+  - *Expected:* Success, local certificates and config files are generated.
+  3. **Token Refresh:** In the Manager UI, click "Regenerate Token" for the node.
+  4. **Old Token Rejection:** Attempt to enroll using the previous token.
+  - *Expected:* Failure (`401 Unauthorized`).
+  5. **New Token Acceptance:** Attempt to enroll using the newly generated token.
+  - *Expected:* Success.
+  6. **Node Deletion:** Delete the node in the Manager UI.
+  7. **Post-Deletion Rejection:** Attempt to enroll using the (now deleted) new token.
+  - *Expected:* Failure (`401 Unauthorized`).

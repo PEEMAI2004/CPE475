@@ -67,5 +67,6 @@ type Claims struct {
 
 type MachineIdentity struct {
 	ID   string
+	DBID int    // The numeric ID from the database
 	Type string // "node" or "device"
 }

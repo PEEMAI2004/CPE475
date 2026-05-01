@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Save, Trash2, Edit2, Download, Shield, Copy, RefreshCw, Key, BookOpen } from 'lucide-react';
+import { Plus, Save, Trash2, Edit2, Shield, Copy, RefreshCw, Key, BookOpen } from 'lucide-react';
 import type { InfrastructureNode, EnrolledDevice } from '../api';
-import { getEnrolledNodes, getEnrolledDevices, enrollNode, updateEnrolledNode, deleteEnrolledNode, enrollDevice, deleteEnrolledDevice, regenNodeToken, regenDeviceAuthToken, downloadNodeConfig, downloadBrokerCert } from '../api';
+import { getEnrolledNodes, getEnrolledDevices, enrollNode, updateEnrolledNode, deleteEnrolledNode, enrollDevice, deleteEnrolledDevice, regenNodeToken, regenDeviceAuthToken } from '../api';
 
 export default function EnrollmentManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   const [nodes, setNodes] = useState<InfrastructureNode[]>([]);
@@ -140,18 +140,15 @@ export default function EnrollmentManagement({ isSuperAdmin }: { isSuperAdmin: b
           >
             <h3 style={{ marginBottom: '1rem', color: 'var(--accent)' }}>Edge Site Enrollment Guide</h3>
             <ol style={{ paddingLeft: '1.5rem', lineHeight: '1.6', color: 'var(--text-sub)' }}>
-              <li><strong>Register Site:</strong> Fill in the "Infrastructure Enrollment" form below using the Public IP or Domain.</li>
-              <li><strong>Download Bundle:</strong> Click <Download size={14} /> to get <code>config.yaml</code> and certificates.</li>
-              <li><strong>Provision Edge Server:</strong>
-                <ul style={{ paddingLeft: '1.5rem', marginTop: '0.5rem' }}>
-                  <li>Upload binary to <code>/opt/potbuddy/local-node/bin/node</code>.</li>
-                  <li>Upload <code>config.yaml</code> to <code>/opt/potbuddy/local-node/</code>.</li>
-                  <li>Deploy <code>ca.crt</code>, <code>client.crt</code>, and <code>client.key</code> to <code>/etc/potbuddy/certs/</code>.</li>
-                </ul>
+              <li><strong>Register Site:</strong> Fill in the "Infrastructure Enrollment" form below.</li>
+              <li><strong>Zero-Trust Provision (Recommended):</strong> 
+                <p style={{ marginTop: '0.4rem', fontSize: '0.9rem' }}>Run the enrollment tool on your edge server using the unique site token:</p>
+                <code style={{ display: 'block', background: 'rgba(0,0,0,0.3)', padding: '0.8rem', borderRadius: '4px', margin: '0.5rem 0', fontSize: '0.8rem', color: '#4ade80', border: '1px solid rgba(74, 222, 128, 0.2)' }}>
+                  ./enroll -token YOUR_SITE_TOKEN
+                </code>
+                This automatically generates keys locally and fetches both certificates and <code>config.yaml</code>.
               </li>
-              <li><strong>MQTT Setup:</strong> Click <Shield size={14} /> to download the <b>MQTT Server Bundle</b> and deploy to <code>/etc/mosquitto/certs/</code> on your broker server.</li>
-              <li><strong>Install Service:</strong> Enable and start the <code>potbuddy.service</code> unit using <code>systemctl</code>.</li>
-              <li><strong>Verify:</strong> Ensure the node is online via the <b>Infra</b> page (status updates every 60s).</li>
+              <li><strong>Manual Setup:</strong> If automated enrollment is not possible, contact an administrator for a manual configuration bundle.</li>
             </ol>
             <h3 style={{ marginTop: '1.5rem', marginBottom: '1rem', color: 'var(--accent)' }}>ESP32 Device Enrollment (mTLS)</h3>
             <ol style={{ paddingLeft: '1.5rem', lineHeight: '1.6', color: 'var(--text-sub)' }}>
@@ -225,8 +222,8 @@ export default function EnrollmentManagement({ isSuperAdmin }: { isSuperAdmin: b
                   </td>
                   <td>
                     <div style={{ display: 'flex', gap: '0.4rem' }}>
-                      <button className="btn" style={{ padding: '0.4rem', background: 'rgba(255,255,255,0.1)' }} title="Download Node Bundle (config + mTLS)" onClick={() => downloadNodeConfig(n.id)}><Download size={14} /></button>
-                      <button className="btn" style={{ padding: '0.4rem', background: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa' }} title="Download MQTT Server Bundle" onClick={() => downloadBrokerCert(n.id)}><Shield size={14} /></button>
+                      <button className="btn" style={{ padding: '0.4rem', background: 'rgba(74, 222, 128, 0.2)', color: '#4ade80' }} title="Copy Node Enrollment Command" onClick={() => copyToClipboard(`./enroll -token ${n.token}`)}><Key size={14} /></button>
+                      <button className="btn" style={{ padding: '0.4rem', background: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa' }} title="Copy MQTT Enrollment Command" onClick={() => copyToClipboard(`./enroll -type mqtt -cn ${n.mqtt_address || n.address} -token ${n.token}`)}><Shield size={14} /></button>
                       <button className="btn" style={{ padding: '0.4rem', background: 'rgba(255,255,255,0.1)' }} onClick={() => handleEditNode(n)}><Edit2 size={14} /></button>
                       <button className="btn danger" style={{ padding: '0.4rem' }} onClick={() => handleDeleteNode(n.id)}><Trash2 size={14} /></button>
                     </div>

@@ -56,7 +56,7 @@ func main() {
 		AllowedHeaders:   []string{"Authorization", "Content-Type"},
 		AllowCredentials: true,
 	})
-	handler := c.Handler(server.Router)
+	handler := c.Handler(server)
 
 	port := os.Getenv("PORT")
 	if port == "" {
