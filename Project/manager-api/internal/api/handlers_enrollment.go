@@ -144,7 +144,8 @@ func (s *Server) generateServerCert(w http.ResponseWriter, r *http.Request) {
 
 	var certPEM, keyPEM []byte
 	if req.CSR != "" {
-		certPEM, err = s.CA.SignCSR([]byte(req.CSR), []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+
+		certPEM, err = s.CA.SignCSR([]byte(req.CSR), []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, target, dnsNames, ips)
 	} else {
 		// Sign with generated key (Key Escrow - Legacy)
 		certPEM, keyPEM, err = s.CA.SignServerCertificate(target, dnsNames, ips)
@@ -220,7 +221,7 @@ func (s *Server) generateClientCert(w http.ResponseWriter, r *http.Request) {
 
 	var certPEM, keyPEM []byte
 	if req.CSR != "" {
-		certPEM, err = s.CA.SignCSR([]byte(req.CSR), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+		certPEM, err = s.CA.SignCSR([]byte(req.CSR), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, commonName, nil, nil)
 	} else {
 		// Sign with generated key (Key Escrow - Legacy)
 		certPEM, keyPEM, err = s.CA.SignCertificate(commonName)
@@ -303,7 +304,7 @@ func (s *Server) enrollDevice(w http.ResponseWriter, r *http.Request) {
 		var certPEM, keyPEM []byte
 		var err error
 		if req.CSR != "" {
-			certPEM, err = s.CA.SignCSR([]byte(req.CSR), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+			certPEM, err = s.CA.SignCSR([]byte(req.CSR), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, req.DeviceID, nil, nil)
 		} else {
 			certPEM, keyPEM, err = s.CA.SignCertificate(req.DeviceID)
 		}
@@ -360,7 +361,7 @@ func (s *Server) bootstrapDevice(w http.ResponseWriter, r *http.Request) {
 
 	var certPEM, keyPEM []byte
 	if req.CSR != "" {
-		certPEM, err = s.CA.SignCSR([]byte(req.CSR), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+		certPEM, err = s.CA.SignCSR([]byte(req.CSR), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, deviceID, nil, nil)
 	} else {
 		certPEM, keyPEM, err = s.CA.SignCertificate(deviceID)
 	}
@@ -449,14 +450,23 @@ func (s *Server) downloadNodeConfig(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&req)
 	}
 
+	dnsNames := []string{}
+	ips := []net.IP{}
+	if n.Address != "" {
+		dnsNames = append(dnsNames, n.Address)
+		if ip := net.ParseIP(n.Address); ip != nil {
+			ips = append(ips, ip)
+		}
+	}
+
 	var certPEM, keyPEM []byte
 	if s.CA != nil {
 		var err error
 		if req.CSR != "" {
-			certPEM, err = s.CA.SignCSR([]byte(req.CSR), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+			certPEM, err = s.CA.SignCSR([]byte(req.CSR), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}, commonName, dnsNames, ips)
 		} else {
 			// Fallback to Key Escrow if no CSR provided (backward compatibility)
-			certPEM, keyPEM, err = s.CA.SignCertificate(commonName)
+			certPEM, keyPEM, err = s.CA.SignCombinedCertificate(commonName, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}, dnsNames, ips)
 		}
 		
 		if err != nil {

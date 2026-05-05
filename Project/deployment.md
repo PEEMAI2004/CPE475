@@ -80,7 +80,7 @@ To ensure zero-trust security, private keys are generated locally at the edge an
 2. **Perform Enrollment**:
    Obtain the **Site Token** from the Manager UI. Run the enrollment tool on the target edge server:
    ```bash
-   ./bin/enroll -token <SITE_TOKEN> -url http://<MANAGER_IP>:8081
+   ./bin/enroll -token <SITE_TOKEN> -manager http://<MANAGER_IP>:8081
    ```
    This command generates `client.key` (locally), `client.csr`, and downloads the signed `client.crt`, Root `ca.crt`, and a customized `config.yaml`.
 
@@ -93,7 +93,7 @@ To secure the local site broker, you must enroll it as a Server and use the `enr
 1. **Enroll Broker**: In the Manager UI, ensure the site's **MQTT Address** is set correctly.
 2. **Run Enrollment Tool**: On the broker server, run the enrollment tool with `-type mqtt`:
    ```bash
-   ./bin/enroll -type mqtt -token <SITE_TOKEN> -cn <BROKER_DOMAIN_OR_IP> -url http://<MANAGER_IP>:8081
+   ./bin/enroll -type mqtt -token <SITE_TOKEN> -cn <BROKER_DOMAIN_OR_IP> -manager http://<MANAGER_IP>:8081
    ```
    This generates `server.key` (locally), `server.csr`, and downloads:
    - `server.crt` (Signed Server Certificate with SANs)

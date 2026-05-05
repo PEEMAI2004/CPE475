@@ -39,7 +39,7 @@ func newTLSConfig(cfg config.MQTTConfig) (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-func createClient(cfg config.MQTTConfig, suffix string) (pahomqtt.Client, error) {
+func createClient(cfg config.MQTTConfig, suffix string, onConnect pahomqtt.OnConnectHandler) (pahomqtt.Client, error) {
 	opts := pahomqtt.NewClientOptions().
 		AddBroker(cfg.Broker).
 		SetClientID(cfg.ClientID + "-" + suffix).
@@ -47,6 +47,9 @@ func createClient(cfg config.MQTTConfig, suffix string) (pahomqtt.Client, error)
 		SetAutoReconnect(true).
 		SetOnConnectHandler(func(c pahomqtt.Client) {
 			log.Printf("[%s] connected to %s", suffix, cfg.Broker)
+			if onConnect != nil {
+				onConnect(c)
+			}
 		}).
 		SetConnectionLostHandler(func(c pahomqtt.Client, err error) {
 			log.Printf("[%s] connection lost: %v", suffix, err)

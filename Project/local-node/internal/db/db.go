@@ -153,17 +153,48 @@ func RegisterDevice(deviceID string) {
 	knownDevices.Store(deviceID, true)
 
 	go func() {
-		_, err := DB.Exec(`
+		// Use a transaction to ensure both records are created
+		tx, err := DB.Begin()
+		if err != nil {
+			knownDevices.Delete(deviceID)
+			return
+		}
+		defer tx.Rollback()
+
+		// 1. Ensure device exists in 'devices' table (master registry)
+		// We use a placeholder token for auto-discovered devices.
+		// If it already exists (e.g. from manual enrollment), DO NOTHING.
+		placeholderToken := "auto_" + deviceID 
+		_, err = tx.Exec(`
+			INSERT INTO devices (device_id, auth_token) 
+			VALUES ($1, $2)
+			ON CONFLICT (device_id) DO NOTHING
+		`, deviceID, placeholderToken)
+		if err != nil {
+			knownDevices.Delete(deviceID)
+			log.Printf("[db] failed to auto-register device %s in master table: %v", deviceID, err)
+			return
+		}
+
+		// 2. Link to 'default' profile
+		_, err = tx.Exec(`
 			INSERT INTO device_profiles (device_id, profile_id) 
 			VALUES ($1, (SELECT id FROM profiles WHERE name='default'))
 			ON CONFLICT (device_id) DO NOTHING
 		`, deviceID)
 		
 		if err != nil {
-			knownDevices.Delete(deviceID) // remove on fail to retry later
-			log.Printf("[db] failed to auto-register device %s: %v", deviceID, err)
-		} else {
-			log.Printf("[db] auto-registered new device: %s", deviceID)
+			knownDevices.Delete(deviceID)
+			log.Printf("[db] failed to link device %s to profile: %v", deviceID, err)
+			return
 		}
+
+		if err := tx.Commit(); err != nil {
+			knownDevices.Delete(deviceID)
+			log.Printf("[db] failed to commit auto-registration for %s: %v", deviceID, err)
+			return
+		}
+
+		log.Printf("[db] auto-registered new device: %s", deviceID)
 	}()
 }

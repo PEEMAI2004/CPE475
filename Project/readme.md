@@ -97,7 +97,7 @@ PotBuddy uses a Zero-Trust enrollment flow where private keys never leave the ed
 1. **Enroll**: Add the node in the Dashboard and obtain its **Site Token**.
 2. **Run Enrollment CLI**: Use the `enroll` tool on the target edge server:
    ```bash
-   ./bin/enroll -token <SITE_TOKEN> -url http://manager.iot.kaminjitt.com
+   ./bin/enroll -token <SITE_TOKEN> -manager http://manager.iot.kaminjitt.com
    ```
    This generates a local private key and obtains a CA-signed certificate and configuration.
 3. **Run**: Start the `local-node` binary. It automatically uses the local certificates to connect to the broker and serve the mTLS metrics API.

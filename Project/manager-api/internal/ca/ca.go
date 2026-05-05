@@ -107,7 +107,8 @@ func (ca *CA) SignServerCertificate(commonName string, dnsNames []string, ipAddr
 	return ca.sign(commonName, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, dnsNames, ipAddresses)
 }
 
-func (ca *CA) SignCSR(csrPEM []byte, extKeyUsage []x509.ExtKeyUsage) (certPEM []byte, err error) {
+
+func (ca *CA) SignCSR(csrPEM []byte, extKeyUsage []x509.ExtKeyUsage, commonName string, extraDNS []string, extraIPs []net.IP) (certPEM []byte, err error) {
 	block, _ := pem.Decode(csrPEM)
 	if block == nil || block.Type != "CERTIFICATE REQUEST" {
 		return nil, fmt.Errorf("invalid CSR PEM")
@@ -127,15 +128,29 @@ func (ca *CA) SignCSR(csrPEM []byte, extKeyUsage []x509.ExtKeyUsage) (certPEM []
 		return nil, err
 	}
 
+	dnsNames := csr.DNSNames
+	dnsNames = append(dnsNames, extraDNS...)
+	
+	ips := csr.IPAddresses
+	ips = append(ips, extraIPs...)
+
+	subject := csr.Subject
+	if commonName != "" {
+		subject = pkix.Name{
+			Organization: []string{"PotBuddy"},
+			CommonName:   commonName,
+		}
+	}
+
 	template := &x509.Certificate{
 		SerialNumber: serialNumber,
-		Subject:      csr.Subject,
+		Subject:      subject,
 		NotBefore:    time.Now(),
 		NotAfter:     time.Now().AddDate(1, 0, 0),
 		ExtKeyUsage:  extKeyUsage,
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		DNSNames:     csr.DNSNames,
-		IPAddresses:  csr.IPAddresses,
+		DNSNames:     dnsNames,
+		IPAddresses:  ips,
 	}
 
 	certBytes, err := x509.CreateCertificate(rand.Reader, template, ca.Cert, csr.PublicKey, ca.Key)
@@ -145,6 +160,10 @@ func (ca *CA) SignCSR(csrPEM []byte, extKeyUsage []x509.ExtKeyUsage) (certPEM []
 
 	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certBytes})
 	return certPEM, nil
+}
+
+func (ca *CA) SignCombinedCertificate(commonName string, extKeyUsage []x509.ExtKeyUsage, dnsNames []string, ipAddresses []net.IP) (certPEM []byte, keyPEM []byte, err error) {
+	return ca.sign(commonName, extKeyUsage, dnsNames, ipAddresses)
 }
 
 func (ca *CA) sign(commonName string, extKeyUsage []x509.ExtKeyUsage, dnsNames []string, ipAddresses []net.IP) (certPEM []byte, keyPEM []byte, err error) {

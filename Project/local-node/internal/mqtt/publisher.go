@@ -22,7 +22,7 @@ type Publisher struct {
 // NewPublisher creates a Publisher that can publish to both local and cloud brokers.
 // Cloud publishing is skipped (but not fatal) if the cloud broker is unreachable.
 func NewPublisher(localCfg, cloudCfg config.MQTTConfig) (*Publisher, error) {
-	localClient, err := createClient(localCfg, "publisher-local")
+	localClient, err := createClient(localCfg, "publisher-local", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +35,7 @@ func NewPublisher(localCfg, cloudCfg config.MQTTConfig) (*Publisher, error) {
 	}
 
 	// Cloud connection is best-effort — log a warning but keep running.
-	cloudClient, err := createClient(cloudCfg, "publisher-cloud")
+	cloudClient, err := createClient(cloudCfg, "publisher-cloud", nil)
 	if err != nil {
 		log.Printf("[publisher] WARNING: cloud broker unavailable: %v — will retry on reconnect", err)
 	} else {

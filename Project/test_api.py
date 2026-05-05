@@ -195,6 +195,11 @@ def test_device_bootstrap_lifecycle(api_headers):
     resp = requests.delete(f"{BASE_URL}/enrollment/devices/{dev_id}", headers=api_headers)
     assert resp.status_code == 200
 
+def test_bootstrap_invalid_token():
+    """TC-BOOT-02: Verify that a fake or invalid AuthToken is rejected"""
+    resp = requests.post(f"{BASE_URL}/enrollment/bootstrap", json={"auth_token": "pb_dev_fake123"})
+    assert resp.status_code == 401
+
 def test_csr_device_enrollment(api_headers):
     """Verify that a device can enroll using a CSR"""
     dev_id = f"csr-dev-{int(time.time())}"

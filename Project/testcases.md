@@ -311,14 +311,47 @@ METRICS_API=https://debian-1.iot.kaminjitt.com:8080/metrics \
 ## 8. End-to-End Lifecycle
 
 - **TC-E2E-01: Node Lifecycle E2E.**
-  1. **Node Creation:** Create a new node in the Manager UI.
-  2. **Initial Enrollment:** Run `./enroll -token <TOKEN>` and `./enroll -type mqtt -token <TOKEN> -cn localhost`.
-  - *Expected:* Success, local certificates and config files are generated.
-  3. **Token Refresh:** In the Manager UI, click "Regenerate Token" for the node.
-  4. **Old Token Rejection:** Attempt to enroll using the previous token.
-  - *Expected:* Failure (`401 Unauthorized`).
-  5. **New Token Acceptance:** Attempt to enroll using the newly generated token.
-  - *Expected:* Success.
-  6. **Node Deletion:** Delete the node in the Manager UI.
-  7. **Post-Deletion Rejection:** Attempt to enroll using the (now deleted) new token.
-  - *Expected:* Failure (`401 Unauthorized`).
+  1. **Infrastructure Creation:** Create a new "Local Node" in the Manager UI to obtain a site token.
+  2. **Initial Enrollment:**
+     - Run `./enroll -token <TOKEN>` to enroll the **local-node**.
+     - Run `./enroll -type mqtt -token <TOKEN> -cn localhost` to enroll the **MQTT broker**.
+     - *Expected:* Success for both; certificates (`client.*` for node, `server.*` for broker) and configs (`config.yaml`, `mosquitto.conf`) generated.
+  3. **Deployment & Connectivity Verification:**
+     - Start the **MQTT broker** using the generated `mosquitto.conf`.
+     - Start the **local-node** using the generated `config.yaml`.
+     - Verify **local-node** successfully connects/subscribes to the local **MQTT broker** via mTLS.
+     - Bootstrap and verify a new **device** using the mock script:
+       ```bash
+       # 1. Register device to get token
+       TOKEN=$(curl -s -X POST http://localhost:8081/api/enrollment/devices \
+         -H "Authorization: Bearer <ADMIN_TOKEN>" \
+         -H "Content-Type: application/json" \
+         -d '{"device_id": "e2e-mock-01"}' | grep -oP '"auth_token":"\K[^"]+')
+       
+       # 2. Run mock script to bootstrap, validate certs, and test mTLS pub
+       python3 mock_device_pub.py --token $TOKEN --id e2e-mock-01
+       ```
+     - Verify the message is processed by the **local-node**.
+     - *Expected:* Full end-to-end mTLS connectivity and data flow.
+  4. **Token Refresh:** In the Manager UI, click "Regenerate Token" for the node.
+  5. **Old Token Rejection:**
+     - Attempt to enroll a **local-node** using the previous token.
+     - Attempt to enroll an **MQTT broker** using the previous token.
+     - *Expected:* Failure (`401 Unauthorized`) for both.
+  6. **New Token Acceptance & Deployment:**
+     - Attempt to enroll a **local-node** using the newly generated token.
+     - Attempt to enroll an **MQTT broker** using the newly generated token.
+     - *Expected:* Success for both; new certificates generated.
+     - **Deploy New Certificates:** 
+       - Update the **local-node** with the new `client.crt` and `client.key`.
+       - Update the **MQTT broker** with the new `server.crt` and `server.key`.
+       - Restart both services.
+     - **Verify Connectivity:** 
+       - Ensure the **local-node** successfully reconnects to the **MQTT broker** using its new identity.
+       - Use the **Existing device certificate** (from step 3) to publish a message to the broker using `mock_device_pub.py` (no token required when providing existing cert paths: `--ca ca.crt --cert client.crt --key client.key`).
+       - *Expected:* Success; existing devices remain operational after infrastructure certificate rotation.
+  7. **Infrastructure Deletion:** Delete the node in the Manager UI.
+  8. **Post-Deletion Rejection:**
+     - Attempt to enroll a **local-node** using the (now deleted) token.
+     - Attempt to enroll an **MQTT broker** using the (now deleted) token.
+     - *Expected:* Failure (`401 Unauthorized`) for both.
