@@ -91,7 +91,7 @@ def test_sit_health_grading_flow():
     resp = requests.get(NODE_API, cert=(CLIENT_CERT, CLIENT_KEY), verify=False)
     readings = resp.json()
     latest = next(r for r in reversed(readings) if r['device_id'] == dev_id)
-    assert latest['status']['overall'] == "warning"
+    assert latest['status']['overall'].startswith("warning")
 
 def test_sit_identity_spoof_detection():
     """TC-VAL-02: Verify that mismatched payload IDs are caught"""
@@ -134,45 +134,44 @@ def test_sit_online_watchdog():
 def test_sit_database_polling():
     """TC-INFRA-04: Verify that local node picks up DB threshold changes"""
     dev_id = f"db-poll-test-{int(time.time())}"
-    
+
     # 1. Send payload that is healthy with default (1500-2500)
     run_mqtt_pub(dev_id, {"soil": 2000})
     time.sleep(2)
-    
+
     resp = requests.get(NODE_API, cert=(CLIENT_CERT, CLIENT_KEY), verify=False)
     latest = next(r for r in reversed(resp.json()) if r['device_id'] == dev_id)
     assert latest['status']['overall'] == "healthy"
-    
+
     # 2. Update DB: set soil_inner_low to 2500 so 2000 becomes "warning"
     print("Updating DB thresholds...")
     
-    # Flexible DB update command
     update_sql = "UPDATE profiles SET soil_inner_low = 2500 WHERE name = 'default';"
-    if "10.0.0.65" in BASE_URL or os.getenv("REMOTE_TEST") == "true":
-        cmd = ["ssh", "root@10.0.0.66", f"sudo -u postgres psql -d potbuddy -c \"{update_sql}\""]
-    else:
-        cmd = ["docker", "exec", "potbuddy-local-postgres-1", "psql", "-U", "postgres", "-d", "potbuddy", "-c", update_sql]
-    
-    subprocess.run(cmd, check=True)
-    
-    # 3. Wait for poller (60s) + buffer
-    print("Waiting for local-node to poll DB (65s)...")
-    time.sleep(65)
-    
-    # 4. Send same payload again
-    run_mqtt_pub(dev_id, {"soil": 2000})
-    time.sleep(2)
-    
-    # 5. Verify it's now warning
-    resp = requests.get(NODE_API, cert=(CLIENT_CERT, CLIENT_KEY), verify=False)
-    latest = next(r for r in reversed(resp.json()) if r['device_id'] == dev_id)
-    assert latest['status']['overall'] == "warning"
-    
-    # Cleanup: restore DB
     restore_sql = "UPDATE profiles SET soil_inner_low = 1500 WHERE name = 'default';"
-    if "10.0.0.65" in BASE_URL or os.getenv("REMOTE_TEST") == "true":
-        cmd = ["ssh", "root@10.0.0.66", f"sudo -u postgres psql -d potbuddy -c \"{restore_sql}\""]
-    else:
-        cmd = ["docker", "exec", "potbuddy-local-postgres-1", "psql", "-U", "postgres", "-d", "potbuddy", "-c", restore_sql]
     
-    subprocess.run(cmd, check=True)
+    if "10.0.0.65" in BASE_URL or os.getenv("REMOTE_TEST") == "true":
+        update_cmd = ["ssh", "root@10.0.0.66", f"sudo -u postgres psql -d potbuddy -c \"{update_sql}\""]
+        restore_cmd = ["ssh", "root@10.0.0.66", f"sudo -u postgres psql -d potbuddy -c \"{restore_sql}\""]
+    else:
+        update_cmd = ["docker", "exec", "potbuddy-local-postgres-1", "psql", "-U", "postgres", "-d", "potbuddy", "-c", update_sql]
+        restore_cmd = ["docker", "exec", "potbuddy-local-postgres-1", "psql", "-U", "postgres", "-d", "potbuddy", "-c", restore_sql]
+
+    try:
+        subprocess.run(update_cmd, check=True)
+
+        # 3. Wait for poller (60s) + buffer
+        print("Waiting for local-node to poll DB (65s)...")
+        time.sleep(65)
+
+        # 4. Send same payload again
+        run_mqtt_pub(dev_id, {"soil": 2000})
+        time.sleep(2)
+
+        # 5. Verify it's now warning
+        resp = requests.get(NODE_API, cert=(CLIENT_CERT, CLIENT_KEY), verify=False)
+        latest = next(r for r in reversed(resp.json()) if r['device_id'] == dev_id)
+        assert latest['status']['overall'].startswith("warning")
+    finally:
+        # Cleanup: restore DB
+        print("Restoring DB thresholds...")
+        subprocess.run(restore_cmd, check=True)

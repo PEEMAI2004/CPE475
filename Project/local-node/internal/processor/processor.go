@@ -15,7 +15,7 @@ type RawReading struct {
 	Soil  *float64 `json:"soil"`
 }
 
-// FieldStatus holds the per-sensor health classification.
+// FieldStatus holds the per-sensor health classification as descriptive strings.
 type FieldStatus struct {
 	Overall string `json:"overall"`
 	Light   string `json:"light"`
@@ -36,10 +36,10 @@ type EnrichedPayload struct {
 
 // humanMessage returns a friendly description for the overall status.
 func humanMessage(overall string) string {
-	switch overall {
-	case StatusHealthy:
+	switch {
+	case overall == StatusHealthy:
 		return "Plant is healthy today 🌱"
-	case StatusWarning:
+	case overall == StatusWarningLow || overall == StatusWarningHigh || overall == StatusWarning:
 		return "Some conditions need attention ⚠️"
 	default:
 		return "Plant needs immediate care 🚨"

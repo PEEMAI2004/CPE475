@@ -6,9 +6,15 @@ import (
 
 // Status constants represent plant health levels.
 const (
-	StatusHealthy  = "healthy"
-	StatusWarning  = "warning"
-	StatusCritical = "critical"
+	StatusHealthy      = "healthy"
+	StatusWarningLow   = "warning_low"
+	StatusWarningHigh  = "warning_high"
+	StatusCriticalLow  = "critical_low"
+	StatusCriticalHigh = "critical_high"
+
+	// Legacy/Base constants for rollup logic
+	StatusWarning      = "warning"
+	StatusCritical     = "critical"
 )
 
 // Bound defines a two-boundary range check.
@@ -22,13 +28,19 @@ type Bound struct {
 // ThresholdProfile maps sensor fields to a Bound (e.g. "soil" -> Bound{...}).
 type ThresholdProfile map[string]Bound
 
-// evaluate returns the status for a single numeric sensor value.
+// evaluate returns a descriptive status for a single numeric sensor value.
 func (b Bound) evaluate(v float64) string {
-	if v < b.OuterLow || v > b.OuterHigh {
-		return StatusCritical
+	if v < b.OuterLow {
+		return StatusCriticalLow
 	}
-	if v < b.InnerLow || v > b.InnerHigh {
-		return StatusWarning
+	if v > b.OuterHigh {
+		return StatusCriticalHigh
+	}
+	if v < b.InnerLow {
+		return StatusWarningLow
+	}
+	if v > b.InnerHigh {
+		return StatusWarningHigh
 	}
 	return StatusHealthy
 }
@@ -73,18 +85,30 @@ func Evaluate(deviceID string, field string, value float64) string {
 	}
 
 	// 3. Find the field threshold in the active profile
-	t, ok := prof[field]
+	b, ok := prof[field]
 	if !ok {
 		return StatusHealthy
 	}
-	return t.evaluate(value)
+	return b.evaluate(value)
 }
 
 // worstStatus returns the more severe of two status strings.
 func worstStatus(a, b string) string {
-	rank := map[string]int{StatusHealthy: 0, StatusWarning: 1, StatusCritical: 2}
-	if rank[a] >= rank[b] {
+	// Map descriptive statuses to their base severity for ranking
+	rank := func(s string) int {
+		switch {
+		case s == StatusCriticalLow || s == StatusCriticalHigh || s == StatusCritical:
+			return 2
+		case s == StatusWarningLow || s == StatusWarningHigh || s == StatusWarning:
+			return 1
+		default:
+			return 0
+		}
+	}
+
+	if rank(a) >= rank(b) {
 		return a
 	}
+	// Return the actual descriptive status b if it's worse
 	return b
 }

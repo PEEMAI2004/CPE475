@@ -348,7 +348,7 @@ METRICS_API=https://debian-1.iot.kaminjitt.com:8080/metrics \
        - Restart both services.
      - **Verify Connectivity:** 
        - Ensure the **local-node** successfully reconnects to the **MQTT broker** using its new identity.
-       - Use the **Existing device certificate** (from step 3) to publish a message to the broker using `mock_device_pub.py` (no token required when providing existing cert paths: `--ca ca.crt --cert client.crt --key client.key`).
+       - Use the **Existing device certificate** (from step 3) to publish a message to the broker using `mock_device_pub.py`.
        - *Expected:* Success; existing devices remain operational after infrastructure certificate rotation.
   7. **Infrastructure Deletion:** Delete the node in the Manager UI.
   8. **Post-Deletion Rejection:**

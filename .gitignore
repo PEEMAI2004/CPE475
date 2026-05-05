@@ -138,8 +138,8 @@ __azurite_db*__.json
 # Arduino
 config.h
 
-# Handoff Context
-Project/handoff_context.md
+# Gemini Instructions
+Project/GEMINI.md
 
 # PotBuddy Specific
 Project/certs/

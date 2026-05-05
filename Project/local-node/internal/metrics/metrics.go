@@ -37,7 +37,7 @@ var (
 
 	healthStatus = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "potbuddy_health_status",
-		Help: "Health status per field (0=healthy, 1=warning, 2=critical)",
+		Help: "Health status. Overall: 0=H, 1=W, 2=C. Sensors: 0=H, 1=WL, 2=WH, 3=CL, 4=CH",
 	}, []string{"device", "field"})
 
 	readingsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -58,11 +58,32 @@ var (
 	heartbeats  = map[string]time.Time{}
 )
 
-func statusValue(s string) float64 {
+// sensorStatusValue maps directional strings to a 0-4 scale for specific alerts.
+func sensorStatusValue(s string) float64 {
 	switch s {
+	case "warning_low":
+		return 1
+	case "warning_high":
+		return 2
+	case "critical_low":
+		return 3
+	case "critical_high":
+		return 4
 	case "warning":
 		return 1
 	case "critical":
+		return 3
+	default:
+		return 0
+	}
+}
+
+// overallStatusValue maps statuses to the traditional 0-2 scale for the main dashboard.
+func overallStatusValue(s string) float64 {
+	switch {
+	case strings.HasPrefix(s, "warning"):
+		return 1
+	case strings.HasPrefix(s, "critical"):
 		return 2
 	default:
 		return 0
@@ -91,7 +112,7 @@ func StartOnlineWatchdog() {
 
 // Update records an enriched payload as Prometheus metric values for the given device.
 func Update(p processor.EnrichedPayload) {
-	// Use lowercase for all device IDs in metrics to ensure consistency with Grafana queries
+	// Normalize device ID to lowercase to ensure consistency and prevent case-sensitive duplicates
 	dev := strings.ToLower(p.DeviceID)
 
 	// Mark device as online and refresh heartbeat.
@@ -113,10 +134,14 @@ func Update(p processor.EnrichedPayload) {
 		soilRaw.WithLabelValues(dev).Set(*p.Raw.Soil)
 	}
 
-	healthStatus.WithLabelValues(dev, "overall").Set(statusValue(p.Status.Overall))
-	healthStatus.WithLabelValues(dev, "light").Set(statusValue(p.Status.Light))
-	healthStatus.WithLabelValues(dev, "temp").Set(statusValue(p.Status.Temp))
-	healthStatus.WithLabelValues(dev, "hum").Set(statusValue(p.Status.Hum))
-	healthStatus.WithLabelValues(dev, "soil").Set(statusValue(p.Status.Soil))
+	// Overall uses 0, 1, 2
+	healthStatus.WithLabelValues(dev, "overall").Set(overallStatusValue(p.Status.Overall))
+
+	// Individual sensors use 0, 1, 2, 3, 4
+	healthStatus.WithLabelValues(dev, "light").Set(sensorStatusValue(p.Status.Light))
+	healthStatus.WithLabelValues(dev, "temp").Set(sensorStatusValue(p.Status.Temp))
+	healthStatus.WithLabelValues(dev, "hum").Set(sensorStatusValue(p.Status.Hum))
+	healthStatus.WithLabelValues(dev, "soil").Set(sensorStatusValue(p.Status.Soil))
+	
 	readingsTotal.WithLabelValues(dev).Inc()
 }

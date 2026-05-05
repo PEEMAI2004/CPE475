@@ -33,54 +33,54 @@ func TestEnrich_AllHealthy(t *testing.T) {
 	}
 }
 
-func TestEnrich_DrySoil_Critical(t *testing.T) {
+func TestEnrich_DrySoil_CriticalHigh(t *testing.T) {
 	raw := RawReading{
 		Light: ptr(5000),
 		Temp:  ptr(25),
 		Hum:   ptr(55),
-		Soil:  ptr(3500), // beyond outer high → critical
+		Soil:  ptr(3500), // beyond outer high → critical_high
 	}
 	p := Enrich(raw, "test-device")
 
-	if p.Status.Soil != StatusCritical {
-		t.Errorf("soil: expected critical, got %s", p.Status.Soil)
+	if p.Status.Soil != StatusCriticalHigh {
+		t.Errorf("soil: expected critical_high, got %s", p.Status.Soil)
 	}
-	if p.Status.Overall != StatusCritical {
-		t.Errorf("overall: expected critical, got %s", p.Status.Overall)
+	if p.Status.Overall != StatusCriticalHigh {
+		t.Errorf("overall: expected critical_high, got %s", p.Status.Overall)
 	}
 }
 
-func TestEnrich_HotDay_Warning(t *testing.T) {
+func TestEnrich_HotDay_WarningHigh(t *testing.T) {
 	raw := RawReading{
 		Light: ptr(5000),
-		Temp:  ptr(32), // inside outer but outside inner → warning
+		Temp:  ptr(32), // inside outer but outside inner high → warning_high
 		Hum:   ptr(55),
 		Soil:  ptr(2000),
 	}
 	p := Enrich(raw, "test-device")
 
-	if p.Status.Temp != StatusWarning {
-		t.Errorf("temp: expected warning, got %s", p.Status.Temp)
+	if p.Status.Temp != StatusWarningHigh {
+		t.Errorf("temp: expected warning_high, got %s", p.Status.Temp)
 	}
-	if p.Status.Overall != StatusWarning {
-		t.Errorf("overall: expected warning, got %s", p.Status.Overall)
+	if p.Status.Overall != StatusWarningHigh {
+		t.Errorf("overall: expected warning_high, got %s", p.Status.Overall)
 	}
 }
 
-func TestEnrich_Dark_Critical(t *testing.T) {
+func TestEnrich_Dark_CriticalLow(t *testing.T) {
 	raw := RawReading{
-		Light: ptr(100), // below outer low → critical
+		Light: ptr(100), // below outer low → critical_low
 		Temp:  ptr(25),
 		Hum:   ptr(55),
 		Soil:  ptr(2000),
 	}
 	p := Enrich(raw, "test-device")
 
-	if p.Status.Light != StatusCritical {
-		t.Errorf("light: expected critical, got %s", p.Status.Light)
+	if p.Status.Light != StatusCriticalLow {
+		t.Errorf("light: expected critical_low, got %s", p.Status.Light)
 	}
-	if p.Status.Overall != StatusCritical {
-		t.Errorf("overall: expected critical, got %s", p.Status.Overall)
+	if p.Status.Overall != StatusCriticalLow {
+		t.Errorf("overall: expected critical_low, got %s", p.Status.Overall)
 	}
 }
 
