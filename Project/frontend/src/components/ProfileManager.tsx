@@ -13,6 +13,25 @@ function BoundSummary({ title, inner, outer }: any) {
   )
 }
 
+function SunSummary({ threshold, maxDirect, minTotal }: any) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', fontSize: '0.875rem', marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+        <span style={{ color: 'var(--text-sub)' }}>Direct Sun (Lux)</span>
+        <span>&gt; {threshold}</span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+        <span style={{ color: 'var(--text-sub)' }}>Max Direct (Mins)</span>
+        <span>{maxDirect}</span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+        <span style={{ color: 'var(--text-sub)' }}>Min Total (Mins)</span>
+        <span>{minTotal}</span>
+      </div>
+    </div>
+  )
+}
+
 function ProfileEditor({ profile, onCancel, onSave }: any) {
   const [form, setForm] = useState<Partial<Profile>>(profile || {
     name: '',
@@ -20,6 +39,7 @@ function ProfileEditor({ profile, onCancel, onSave }: any) {
     temp_inner_low: 18, temp_inner_high: 30, temp_outer_low: 15, temp_outer_high: 35,
     hum_inner_low: 40, hum_inner_high: 70, hum_outer_low: 30, hum_outer_high: 80,
     light_inner_low: 2000, light_inner_high: 50000, light_outer_low: 500, light_outer_high: 80000,
+    sun_direct_threshold: 30000, max_direct_sun_minutes: 180, min_total_sun_minutes: 360,
   });
   const update = (field: keyof Profile, value: any) => setForm(f => ({ ...f, [field]: value }));
 
@@ -42,6 +62,14 @@ function ProfileEditor({ profile, onCancel, onSave }: any) {
             </div>
           </div>
         ))}
+        <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1.5rem', borderRadius: '12px', gridColumn: '1 / -1' }}>
+          <h4 style={{ marginBottom: '1rem', color: '#ffb347' }}>☀️ Sunlight Tracking</h4>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+            <div><label style={{ fontSize: '0.8rem', color: 'var(--text-sub)' }}>Direct Sun Lux Threshold</label><input type="number" className="input-field" value={form.sun_direct_threshold} onChange={e => update('sun_direct_threshold', Number(e.target.value))} /></div>
+            <div><label style={{ fontSize: '0.8rem', color: 'var(--text-sub)' }}>Max Direct Sun (Minutes)</label><input type="number" className="input-field" value={form.max_direct_sun_minutes} onChange={e => update('max_direct_sun_minutes', Number(e.target.value))} /></div>
+            <div><label style={{ fontSize: '0.8rem', color: 'var(--text-sub)' }}>Min Total Sun (Minutes)</label><input type="number" className="input-field" value={form.min_total_sun_minutes} onChange={e => update('min_total_sun_minutes', Number(e.target.value))} /></div>
+          </div>
+        </div>
       </div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '2rem' }}>
         <button className="btn" style={{ background: 'transparent', border: '1px solid var(--panel-border)' }} onClick={onCancel}>Cancel</button>
@@ -102,6 +130,7 @@ export default function ProfileManager({ profiles, reload, canEdit, isSuperAdmin
                 <BoundSummary title="Temp" inner={[p.temp_inner_low, p.temp_inner_high]} outer={[p.temp_outer_low, p.temp_outer_high]} />
                 <BoundSummary title="Hum"  inner={[p.hum_inner_low, p.hum_inner_high]} outer={[p.hum_outer_low, p.hum_outer_high]} />
                 <BoundSummary title="Light" inner={[p.light_inner_low, p.light_inner_high]} outer={[p.light_outer_low, p.light_outer_high]} />
+                <SunSummary threshold={p.sun_direct_threshold} maxDirect={p.max_direct_sun_minutes} minTotal={p.min_total_sun_minutes} />
               </div>
             </div>
           ))}

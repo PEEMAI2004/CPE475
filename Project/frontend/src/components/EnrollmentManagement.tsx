@@ -116,9 +116,37 @@ export default function EnrollmentManagement({ isSuperAdmin }: { isSuperAdmin: b
     }
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    alert("Copied to clipboard!");
+  const copyToClipboard = async (text: string) => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        alert("Copied to clipboard!");
+      } else {
+        throw new Error("Clipboard API unavailable");
+      }
+    } catch (err) {
+      // Fallback for non-secure contexts (HTTP)
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      textArea.style.position = "fixed";
+      textArea.style.left = "-9999px";
+      textArea.style.top = "0";
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      try {
+        const successful = document.execCommand('copy');
+        if (successful) {
+          alert("Copied to clipboard!");
+        } else {
+          throw new Error("execCommand copy failed");
+        }
+      } catch (copyErr) {
+        console.error("Fallback copy failed", copyErr);
+        alert("Failed to copy. Please manually copy the text.");
+      }
+      document.body.removeChild(textArea);
+    }
   };
 
   return (

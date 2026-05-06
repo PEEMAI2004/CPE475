@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	DB *sql.DB
+	DB           *sql.DB
 	knownDevices sync.Map
 )
 
@@ -56,7 +56,8 @@ func poll() {
 			soil_inner_low, soil_inner_high, soil_outer_low, soil_outer_high,
 			temp_inner_low, temp_inner_high, temp_outer_low, temp_outer_high,
 			hum_inner_low, hum_inner_high, hum_outer_low, hum_outer_high,
-			light_inner_low, light_inner_high, light_outer_low, light_outer_high
+			light_inner_low, light_inner_high, light_outer_low, light_outer_high,
+			sun_direct_threshold, max_direct_sun_minutes, min_total_sun_minutes
 		FROM profiles
 	`)
 	if err != nil {
@@ -68,7 +69,7 @@ func poll() {
 	// Temp structures to hold loaded data
 	// id -> Profile logic
 	profileMap := make(map[int]processor.ThresholdProfile)
-	
+
 	// deviceId -> profile
 	deviceMap := make(map[string]processor.ThresholdProfile)
 	var defaultProfile processor.ThresholdProfile
@@ -81,30 +82,47 @@ func poll() {
 		var til, tih, tol, toh *float64
 		var hil, hih, hol, hoh *float64
 		var lil, lih, lol, loh *float64
+		var sdt *float64
+		var maxdm, minsm *int
 
 		err := rows.Scan(&id, &name,
 			&sil, &sih, &sol, &soh,
 			&til, &tih, &tol, &toh,
 			&hil, &hih, &hol, &hoh,
 			&lil, &lih, &lol, &loh,
+			&sdt, &maxdm, &minsm,
 		)
 		if err != nil {
 			log.Printf("[db] failed to scan profile row: %v", err)
 			continue
 		}
 
-		tp := make(processor.ThresholdProfile)
+		tp := processor.ThresholdProfile{
+			Bounds: make(map[string]processor.Bound),
+			Sun:    processor.SunThresholds{DirectThreshold: 30000, MaxDirectMinutes: 180, MinTotalMinutes: 360},
+		}
+
 		if sil != nil && sih != nil && sol != nil && soh != nil {
-			tp["soil"] = processor.Bound{InnerLow: *sil, InnerHigh: *sih, OuterLow: *sol, OuterHigh: *soh}
+			tp.Bounds["soil"] = processor.Bound{InnerLow: *sil, InnerHigh: *sih, OuterLow: *sol, OuterHigh: *soh}
 		}
 		if til != nil && tih != nil && tol != nil && toh != nil {
-			tp["temp"] = processor.Bound{InnerLow: *til, InnerHigh: *tih, OuterLow: *tol, OuterHigh: *toh}
+			tp.Bounds["temp"] = processor.Bound{InnerLow: *til, InnerHigh: *tih, OuterLow: *tol, OuterHigh: *toh}
 		}
 		if hil != nil && hih != nil && hol != nil && hoh != nil {
-			tp["hum"] = processor.Bound{InnerLow: *hil, InnerHigh: *hih, OuterLow: *hol, OuterHigh: *hoh}
+			tp.Bounds["hum"] = processor.Bound{InnerLow: *hil, InnerHigh: *hih, OuterLow: *hol, OuterHigh: *hoh}
 		}
 		if lil != nil && lih != nil && lol != nil && loh != nil {
-			tp["light"] = processor.Bound{InnerLow: *lil, InnerHigh: *lih, OuterLow: *lol, OuterHigh: *loh}
+			tp.Bounds["light"] = processor.Bound{InnerLow: *lil, InnerHigh: *lih, OuterLow: *lol, OuterHigh: *loh}
+		}
+
+		if sdt != nil {
+			tp.Sun.DirectThreshold = *sdt
+		}
+		if maxdm != nil {
+			tp.Sun.MaxDirectMinutes = *maxdm
+		}
+		if minsm != nil {
+			tp.Sun.MinTotalMinutes = *minsm
 		}
 
 		profileMap[id] = tp
@@ -164,7 +182,7 @@ func RegisterDevice(deviceID string) {
 		// 1. Ensure device exists in 'devices' table (master registry)
 		// We use a placeholder token for auto-discovered devices.
 		// If it already exists (e.g. from manual enrollment), DO NOTHING.
-		placeholderToken := "auto_" + deviceID 
+		placeholderToken := "auto_" + deviceID
 		_, err = tx.Exec(`
 			INSERT INTO devices (device_id, auth_token) 
 			VALUES ($1, $2)
@@ -182,7 +200,7 @@ func RegisterDevice(deviceID string) {
 			VALUES ($1, (SELECT id FROM profiles WHERE name='default'))
 			ON CONFLICT (device_id) DO NOTHING
 		`, deviceID)
-		
+
 		if err != nil {
 			knownDevices.Delete(deviceID)
 			log.Printf("[db] failed to link device %s to profile: %v", deviceID, err)

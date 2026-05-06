@@ -1,8 +1,8 @@
-# 🌿 PotBuddy — Attachable IoT Plant Care Device
+# 🌿 PotBuddy — Enterprise IoT Plant Care Fleet
 
 **Plant Care Group | CPE475**
 
-> An affordable, attachable IoT device that monitors soil moisture, temperature, humidity, and light — then recommends care actions in real time.
+> An affordable, attachable IoT solution for large-scale plant monitoring. Features Zero-Trust security, multi-site distributed processing, and real-time health analytics.
 
 ---
 
@@ -19,153 +19,157 @@
 
 ## 📐 System Architecture
 
-PotBuddy implements a **Zero-Trust Multi-Site Edge Architecture** using Mutual TLS (mTLS).
+PotBuddy implements a **Zero-Trust Multi-Site Edge Architecture**. The system scales to **N physical sites**, each operating its own local infrastructure while reporting to a central management plane.
 
+### 🌐 Deployment Topology
 ```mermaid
 graph TD
-    subgraph "Edge Sites (0 to N)"
-        ESP32["<b>ESP32 Device</b><br/>(mTLS Identity)"] <-->|MQTT :8883/8884| Broker["<b>Mosquitto</b><br/>(Verifies CA)"]
-        Node["<b>Edge Processor</b><br/>(mTLS Client)"] <-->|MQTT :8883| Broker
+    subgraph "Edge Site 0...N"
+        ESP32["<b>ESP32 Devices</b><br/>mTLS Clients"] <-->|MQTT :8883| Broker["<b>Local Broker</b><br/>Mosquitto"]
+        Node["<b>Edge Processor</b><br/>Go Service"] <-->|MQTT :8883| Broker
     end
 
-    Node -- "REST / Config" --> Manager["<b>Central Manager API</b><br/>(CA & Enrollment)"]
-    
-    subgraph "Cloud Infrastructure"
-        DB[(PostgreSQL :5432)]
-        Vis["Monitoring (Prometheus/Grafana)"]
+    subgraph "Central Cloud Infrastructure"
+        Manager["<b>Manager API</b><br/>Central CA & UI"]
+        DB[(<b>PostgreSQL</b><br/>Profiles & Auth)]
+        Prom["<b>Prometheus</b><br/>Global Scraper"]
+        Graf["<b>Grafana</b><br/>Visualization"]
     end
 
-    Manager -- "Identity & Persistence" --> DB
-    Node <-->|mTLS Scrape :8080| Vis
-    Vis -- "Persistence" --> DB
+    Node -- "REST / Config" --> Manager
+    Manager -- "SQL" --> DB
+    Prom -- "mTLS Scrape :8080" --> Node
+    Graf -- "Query" --> Prom
 ```
 
 ---
 
-## 🔐 mTLS Implementation
+## 🔐 Zero-Trust Security (mTLS)
 
-PotBuddy ensures security by treating every component as a potential threat until proven otherwise via cryptographic identity.
+We utilize a custom Certificate Authority (CA) built into the Manager API to issue unique cryptographic identities. No component is trusted unless it presents a valid, CA-signed certificate.
 
-### 📊 Secure Bootstrapping & Operation Flow
+### 🔄 Device Bootstrapping Sequence
+How a "factory-fresh" device transitions from unsecured to Zero-Trust.
 
 ```mermaid
-graph TD
-    subgraph "Edge Sites (Site 0, Site 1, ... Site N)"
-        ESP32["<b>ESP32 Device</b><br/>(mTLS Identity)"] <-->|MQTT :8883| Broker["<b>Mosquitto</b><br/>(Verifies CA)"]
-        Node["<b>Edge Processor</b><br/>(mTLS Client/Server)"] <-->|MQTT :8883| Broker
-    end
+sequenceDiagram
+    participant Admin
+    participant Manager as Manager API (CA)
+    participant ESP32
+    participant Broker as Site Broker
 
-    Node <-->|mTLS Scrape :8080| Prom["<b>Prometheus</b><br/>(mTLS Client)"]
-    Node -- "REST / Config" --> Manager["<b>Central Manager API</b><br/>(CA & Enrollment)"]
+    Admin->>Manager: Register Device ID
+    Manager-->>Admin: Return One-Time AuthToken
+    Admin->>ESP32: Provision WiFi & AuthToken (Captive Portal)
+    
+    ESP32->>Manager: HTTPS POST /bootstrap (AuthToken)
+    Note right of Manager: Validates Token & Signs Cert
+    Manager-->>ESP32: Return mTLS Bundle (ca.crt, client.crt, client.key)
+    
+    ESP32->>ESP32: Save Bundle to LittleFS
+    ESP32->>Broker: Connect via mTLS (Port 8883)
+    Broker-->>ESP32: Connection Established
 ```
 
-### 1. Central Certificate Authority (CA)
-The **Manager API** serves as the Root CA. It dynamically generates two types of identities:
-- **Client Identities**: For ESP32 devices, Edge Processors, and the Prometheus Scraper.
-- **Server Identities**: For Mosquitto brokers and Local Node APIs, including SANs for hostnames.
+---
 
-### 2. Multi-Site Distributed Security
-PotBuddy is proven in production across multiple physical sites:
-- **Site 0**: Operational at `mqtt-0.iot.kaminjitt.com`.
-- **Site 1**: Operational at `mqtt-1.iot.kaminjitt.com`.
-Every broker uses strict mTLS, mapping certificate identities to MQTT usernames automatically.
+## 🌡️ Plant Health Logic
 
-### 3. Monitoring & Scraper Security (mTLS)
-To achieve true **Zero-Trust**, the Local Node HTTP API (Port 8080) is secured using the same Root CA:
-- **mTLS Required**: The `/metrics` endpoint rejects any connection without a CA-signed certificate.
-- **Infrastructure Identity**: Prometheus is enrolled as a secure client, using its own identity bundle to authenticate against edge nodes.
+The system evaluates sensor data against dynamic thresholds defined in "Health Profiles".
+
+### 📊 Interaction & Data Flow
+```mermaid
+graph LR
+    Sensors[Sensors] -->|I2C/Analog| ESP32[ESP32]
+    ESP32 -->|JSON/mTLS| Broker[MQTT Broker]
+    Broker -->|Pub/Sub| Processor[Edge Processor]
+    
+    subgraph "Edge Logic"
+        Processor --> Logic{Health Engine}
+        Logic -->|Thresholds| Profiles[(Cached Profiles)]
+        Logic -->|Daily Tracker| Sun[Sunlight Accumulator]
+    end
+
+    Logic -->|Enriched Data| LocalAPI[Local REST API]
+    LocalAPI -->|Metrics| Prom[Prometheus]
+```
+
+### 📈 Health State Machine
+Status transitions based on boundary violations.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Healthy
+    
+    Healthy --> Warning: Value enters Inner Bound
+    Warning --> Healthy: Value returns to center
+    
+    Warning --> Critical: Value enters Outer Bound
+    Critical --> Warning: Value improves slightly
+    Critical --> Healthy: Value fully recovers
+    
+    state Healthy {
+        [*] --> Optimal
+    }
+    state Warning {
+        Warning_Low
+        Warning_High
+        Insufficient_Sun
+    }
+    state Critical {
+        Critical_Low
+        Critical_High
+        Too_Much_Sun
+    }
+```
+
+---
+
+## ☀️ Sunlight Exposure Tracking
+
+The Local Node features a high-fidelity sunlight tracker to prevent "instantaneous" light alerts from triggering during night cycles.
+
+- **Throttle:** Exposure increments at most **once per minute**.
+- **Direct Sun:** Counts when `lux > DirectThreshold` (Profile-specific).
+- **Indirect Sun:** Counts when `500 < lux < DirectThreshold`.
+- **Rollover:** Daily counters reset at **Midnight (BKK Time)**.
+- **Alerts:** 
+    - *Too Much:* Triggered immediately if `DirectMinutes` exceeded.
+    - *Insufficient:* Evaluated at **Sunset (18:00)** against `MinTotalMinutes`.
 
 ---
 
 ## 🚀 Secure Deployment Guide
 
-### A. Manager API (The CA)
-Enable the Certificate Authority by setting the environment variable:
-```bash
-Environment=ENABLE_CA=true
-```
+### 1. Central Infrastructure
+1.  Deploy **PostgreSQL** and run `init.sql`.
+2.  Start **Manager API** with `ENABLE_CA=true`.
+3.  Invite Users via the **Users** tab (Google SSO required).
 
-### B. MQTT Broker (mTLS Listener)
-To secure a new site broker (e.g., Site 2):
-1. **Enroll**: Add the site in the **Enrollment** tab of the Dashboard.
-2. **Obtain Identity**: You can either download a server bundle (legacy) or submit a **CSR** (Certificate Signing Request) to the Manager API.
-3. **Configure**: Extract or save `ca.crt`, `server.crt`, and `server.key` into `/etc/mosquitto/certs/`.
-4. **Mosquitto**: Enable the port 8883 listener with `require_certificate true`.
-
-### C. Edge Processor (Local Node)
-PotBuddy uses a Zero-Trust enrollment flow where private keys never leave the edge server.
-1. **Enroll**: Add the node in the Dashboard and obtain its **Site Token**.
-2. **Run Enrollment CLI**: Use the `enroll` tool on the target edge server:
-   ```bash
-   ./bin/enroll -token <SITE_TOKEN> -manager http://manager.iot.kaminjitt.com
-   ```
-   This generates a local private key and obtains a CA-signed certificate and configuration.
-3. **Run**: Start the `local-node` binary. It automatically uses the local certificates to connect to the broker and serve the mTLS metrics API.
-
-### D. Prometheus Scraper
-1. **Enroll Scraper**: Enroll "Prometheus" as a node in the Manager UI.
-2. **Obtain Identity**: Use the `enroll` tool (see Step C) on the Prometheus server to generate its unique mTLS identity.
-3. **Configure Scrape Job**:
-   ```yaml
-   - job_name: 'potbuddy-local-node'
-     scheme: https
-     tls_config:
-       ca_file: /etc/prometheus/certs/ca.crt
-       cert_file: /etc/prometheus/certs/prometheus.crt
-       key_file: /etc/prometheus/certs/prometheus.key
-     static_configs:
-       - targets: ['site-hostname:8080']
-   ```
+### 2. Edge Site Setup
+1.  **Enroll Site:** Create a node in the Dashboard to get a **Site Token**.
+2.  **Enroll Broker:** 
+    ```bash
+    ./enroll -type mqtt -token <TOKEN> -cn <BROKER_IP>
+    ```
+3.  **Enroll Processor:**
+    ```bash
+    ./enroll -token <TOKEN>
+    ```
+4.  **Launch:** Deploy generated `mosquitto.conf` and `config.yaml`.
 
 ---
 
-### C. ESP32 Provisioning
-1. **Hold BOOT Button**: Press and hold the BOOT button (GPIO 0) for 5 seconds to wipe settings.
-2. **Connect to Portal**: Join the `PotBuddy-Setup` WiFi network.
-3. **Configure**:
-   - `Manager Host`: `manager.iot.kaminjitt.com`
-   - `MQTT Host`: `(MQTT Broker Address from Dashboard)`
-   - `MQTT mTLS Port`: `8883`
-   - `Device Auth Token`: (Generated from Dashboard)
+## 🔌 Hardware Specs
 
-> **⚠️ Critical Note**: ESP32 devices require a working internet connection to sync time via **NTP** before connecting. If the device clock is incorrect, mTLS handshakes with the MQTT broker will fail.
-
----
-
-## 🌡️ Health Status Logic
-
-The Local Node classifies each sensor reading independently then rolls up a **worst-case overall status**.
-
-| Sensor | 🟢 Healthy | 🟡 Warning | 🔴 Critical |
-| :--- | :---: | :---: | :---: |
-| **Soil** (ADC 0–4095) | 1500 – 2500 | 1000–1499 or 2501–3000 | < 1000 or > 3000 |
-| **Temperature** (°C) | 18 – 30 | 15–17 or 31–35 | < 15 or > 35 |
-| **Humidity** (%) | 40 – 70 | 30–39 or 71–80 | < 30 or > 80 |
-| **Light** (lux) | 2000 – 50 000 | 500–1999 or 50 001–80 000 | < 500 or > 80 000 |
-
----
-
-## 🔌 Hardware
-
-### Controller — ESP32-WROOM-32
-- **Connectivity**: WiFi + `WiFiClientSecure` for mTLS.
-- **Security**: Hardware-accelerated SHA/AES + NTP Time Sync.
-- **Storage**: LittleFS for certificate persistence.
+### ESP32-WROOM-32
+- **mTLS:** Hardware-accelerated RSA/AES via `WiFiClientSecure`.
+- **Time:** NTP sync required for certificate validity.
+- **Storage:** LittleFS used for secure credential persistence.
 
 ### Sensors
-- **BH1750**: I2C Light Sensor.
-- **DHT11**: Temperature & Humidity.
-- **Soil Sensor**: Analog Resistive Probe.
+- **BH1750:** Digital I2C Light Sensor (High Res).
+- **DHT11:** Temperature & Humidity.
+- **Soil:** Capacitive/Resistive Analog Probe.
 
 ---
-
-## 📈 Progress
-
-- [x] **Phase 1: Core Identity & RBAC** (Google SSO, JWT)
-- [x] **Phase 2: Web Enrollment** (Infrastructure monitoring, Config download)
-- [x] **Phase 3: mTLS Infrastructure Rollout** (CA Logic, Mosquitto 8883, Go mTLS)
-- [x] **Phase 4: IoT Device Migration** (WiFiManager, ESP32 HTTPS Bootstrap, mTLS MQTT)
-
----
-
-**PLANT CARE GROUP** — CPE475 | *Thank You!*

@@ -60,8 +60,60 @@ This document outlines the test cases designed to cover all features and edge ca
 | **7. Cross-Environment Execution** | | | | |
 | TC-ENV-01 | Local Docker Compose | Automated | ALL | Supported via Default Config |
 | TC-ENV-02 | Remote Infrastructure | Automated | ALL | Supported via Env Overrides |
-| **8. End-to-End Lifecycle** | | | | |
+| **8. Sunlight Tracking** | | | | |
+| TC-SUN-01 | Direct Sun Accumulation | Automated | SIT | `test_sun_accumulation` |
+| TC-SUN-02 | Indirect Sun Accumulation | Automated | SIT | `test_sun_accumulation` |
+| TC-SUN-03 | Too Much Sun Alert | Automated | SIT | `test_sun_alerts` |
+| TC-SUN-04 | Insufficient Sun Alert (Sunset) | Automated | SIT | `test_sun_alerts` |
+| TC-SUN-05 | Prometheus Recovery | Automated | SIT | `test_sun_recovery` |
+| **9. End-to-End Lifecycle** | | | | |
 | TC-E2E-01 | Node Lifecycle E2E | Manual | CLI/UI | - |
+
+---
+
+## 🧪 E2E Test Flow Diagram
+
+This diagram visualizes the flow of the automated E2E lifecycle test (`TC-E2E-01` / `test_e2e_extended.py`).
+
+```mermaid
+sequenceDiagram
+    participant Test as Test Suite
+    participant Manager as Manager API
+    participant CLI as Enroll CLI
+    participant Node as Local Node
+    participant Broker as Local Broker
+    participant MockDev as Mock Device
+
+    Test->>Manager: 1. Create Node (Site 102)
+    Manager-->>Test: Return Node ID & Token 1
+    
+    Test->>CLI: 2. Enroll Node (Token 1)
+    CLI->>Manager: POST /bootstrap
+    Manager-->>CLI: Node mTLS Certs + config.yaml
+    
+    Test->>CLI: 3. Enroll MQTT Broker (Token 1)
+    CLI->>Manager: POST /bootstrap
+    Manager-->>CLI: Broker mTLS Certs + mosquitto.conf
+    
+    Test->>Broker: 4. Start Mosquitto
+    Test->>Node: 5. Start Edge Processor
+    
+    Test->>Manager: 6. Register Mock Device
+    Manager-->>Test: Return AuthToken
+    
+    Test->>MockDev: 7. Run mock_device_pub.py (AuthToken)
+    MockDev->>Manager: POST /bootstrap
+    Manager-->>MockDev: Device mTLS Certs
+    MockDev->>Broker: 8. Publish via mTLS :8883
+    Broker->>Node: Deliver Payload
+    
+    Test->>Manager: 9. Regen Node Token (Token 2)
+    Test->>CLI: 10. Enroll Node (Token 1) - EXPECT REJECT
+    CLI--xManager: 401 Unauthorized
+    
+    Test->>CLI: 11. Re-enroll Node (Token 2) - SUCCESS
+    Test->>Manager: 12. Delete Node (Site 102)
+```
 
 ---
 
@@ -308,7 +360,39 @@ METRICS_API=https://debian-1.iot.kaminjitt.com:8080/metrics \
 
 ---
 
-## 8. End-to-End Lifecycle
+## 8. Sunlight Tracking Logic (Local Node) (Only in local docker compose)
+
+### 8.1 Exposure Accumulation
+- **TC-SUN-01: Direct Sun Accumulation.**
+  1. Publish lux reading > `sun_direct_threshold`.
+  2. Wait 61 seconds.
+  3. Publish another lux reading > `sun_direct_threshold`.
+  - *Expected:* `today_direct_min` increments by 1.
+- **TC-SUN-02: Indirect Sun Accumulation.**
+  1. Publish lux reading between 500 and `sun_direct_threshold`.
+  2. Wait 61 seconds.
+  3. Publish another lux reading in the same range.
+  - *Expected:* `today_indirect_min` increments by 1.
+
+### 8.2 Sun Health Alerts
+- **TC-SUN-03: Too Much Sun Alert.**
+  1. Accumulate `today_direct_min` until it exceeds `max_direct_sun_minutes`.
+  - *Expected:* Sun status becomes `too_much_sun`; overall health becomes `warning`.
+- **TC-SUN-04: Insufficient Sun Alert (Sunset).**
+  1. Simulate/Wait for time > 18:00 Bangkok Time.
+  2. Ensure `total_minutes` (Direct + Indirect) < `min_total_sun_minutes`.
+  - *Expected:* Sun status becomes `insufficient_sun` after the 18:00 check.
+
+### 8.3 Persistence & Recovery
+- **TC-SUN-05: Prometheus Recovery.**
+  1. Accumulate 5 minutes of sun exposure.
+  2. Restart the `local-node` service.
+  3. Send a new light reading.
+  - *Expected:* Node fetches historical data from Prometheus; counter resumes from 5 minutes.
+
+---
+
+## 9. End-to-End Lifecycle
 
 - **TC-E2E-01: Node Lifecycle E2E.**
   1. **Infrastructure Creation:** Create a new "Local Node" in the Manager UI to obtain a site token.

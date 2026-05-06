@@ -138,10 +138,7 @@ __azurite_db*__.json
 # Arduino
 config.h
 
-# Gemini Instructions
-Project/GEMINI.md
 
-# PotBuddy Specific
 Project/certs/
 Project/manager-api/manager
 Project/local-node/bin/

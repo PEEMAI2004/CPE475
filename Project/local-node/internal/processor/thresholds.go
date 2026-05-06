@@ -15,6 +15,10 @@ const (
 	// Legacy/Base constants for rollup logic
 	StatusWarning      = "warning"
 	StatusCritical     = "critical"
+
+	// Sunlight specific statuses
+	StatusSunTooMuch   = "too_much_sun"
+	StatusSunTooLittle = "insufficient_sun"
 )
 
 // Bound defines a two-boundary range check.
@@ -25,8 +29,18 @@ type Bound struct {
 	OuterHigh float64
 }
 
-// ThresholdProfile maps sensor fields to a Bound (e.g. "soil" -> Bound{...}).
-type ThresholdProfile map[string]Bound
+// SunThresholds defines the requirements for sunlight exposure.
+type SunThresholds struct {
+	DirectThreshold    float64
+	MaxDirectMinutes   int
+	MinTotalMinutes    int
+}
+
+// ThresholdProfile maps sensor fields to a Bound and includes sun requirements.
+type ThresholdProfile struct {
+	Bounds map[string]Bound
+	Sun    SunThresholds
+}
 
 // evaluate returns a descriptive status for a single numeric sensor value.
 func (b Bound) evaluate(v float64) string {
@@ -54,13 +68,20 @@ var (
 
 func init() {
 	devices = make(map[string]ThresholdProfile)
-	
+
 	// Fallback hardcoded defaults if DB isn't loaded yet
-	defaultProfile = map[string]Bound{
-		"soil":  {InnerLow: 1500, InnerHigh: 2500, OuterLow: 1000, OuterHigh: 3000},
-		"temp":  {InnerLow: 18, InnerHigh: 30, OuterLow: 15, OuterHigh: 35},
-		"hum":   {InnerLow: 40, InnerHigh: 70, OuterLow: 30, OuterHigh: 80},
-		"light": {InnerLow: 2000, InnerHigh: 50000, OuterLow: 500, OuterHigh: 80000},
+	defaultProfile = ThresholdProfile{
+		Bounds: map[string]Bound{
+			"soil":  {InnerLow: 1500, InnerHigh: 2500, OuterLow: 1000, OuterHigh: 3000},
+			"temp":  {InnerLow: 18, InnerHigh: 30, OuterLow: 15, OuterHigh: 35},
+			"hum":   {InnerLow: 40, InnerHigh: 70, OuterLow: 30, OuterHigh: 80},
+			"light": {InnerLow: 2000, InnerHigh: 50000, OuterLow: 500, OuterHigh: 80000},
+		},
+		Sun: SunThresholds{
+			DirectThreshold:  30000,
+			MaxDirectMinutes: 180,
+			MinTotalMinutes:  360,
+		},
 	}
 }
 
@@ -72,23 +93,46 @@ func UpdateThresholds(deviceMap map[string]ThresholdProfile, defProfile Threshol
 	defaultProfile = defProfile
 }
 
+// GetSunThresholds returns the sunlight requirements for a specific device.
+func GetSunThresholds(deviceID string) SunThresholds {
+	mu.RLock()
+	defer mu.RUnlock()
+	if p, ok := devices[deviceID]; ok {
+		return p.Sun
+	}
+	return defaultProfile.Sun
+}
+
 // Evaluate returns the health status string for a given sensor field and value.
 func Evaluate(deviceID string, field string, value float64) string {
 	mu.RLock()
 	defer mu.RUnlock()
 
 	// 1. Try to find device-specific profile
-	prof, ok := devices[deviceID]
+	p, ok := devices[deviceID]
 	if !ok {
 		// 2. Fall back to default
-		prof = defaultProfile
+		p = defaultProfile
 	}
 
 	// 3. Find the field threshold in the active profile
-	b, ok := prof[field]
+	b, ok := p.Bounds[field]
 	if !ok {
 		return StatusHealthy
 	}
+
+	// Instantaneous low light is natural (night time) and handled via Daily Sun Tracker.
+	// Ignore lower bounds to prevent false "Too Dark" critical alerts.
+	if field == "light" {
+		if value > b.OuterHigh {
+			return StatusCriticalHigh
+		}
+		if value > b.InnerHigh {
+			return StatusWarningHigh
+		}
+		return StatusHealthy
+	}
+
 	return b.evaluate(value)
 }
 
@@ -101,6 +145,8 @@ func worstStatus(a, b string) string {
 			return 2
 		case s == StatusWarningLow || s == StatusWarningHigh || s == StatusWarning:
 			return 1
+		case s == StatusSunTooMuch || s == StatusSunTooLittle:
+			return 1 // Sunlight issues treated as warnings for rollup
 		default:
 			return 0
 		}
@@ -112,3 +158,4 @@ func worstStatus(a, b string) string {
 	// Return the actual descriptive status b if it's worse
 	return b
 }
+

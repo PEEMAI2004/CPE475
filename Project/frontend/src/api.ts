@@ -48,6 +48,9 @@ export interface Profile {
   light_inner_high: number;
   light_outer_low: number;
   light_outer_high: number;
+  sun_direct_threshold: number;
+  max_direct_sun_minutes: number;
+  min_total_sun_minutes: number;
 }
 
 export interface Device {

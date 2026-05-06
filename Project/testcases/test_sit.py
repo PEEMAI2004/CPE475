@@ -84,7 +84,7 @@ def test_sit_health_grading_flow():
     assert latest['status']['overall'] == "healthy"
 
     # 3. Send Warning Data
-    run_mqtt_pub(dev_id, {"light": 600, "temp": 25, "hum": 50, "soil": 2000})
+    run_mqtt_pub(dev_id, {"light": 5000, "temp": 32, "hum": 50, "soil": 2000})
     time.sleep(2)
     
     # 4. Verify status updated

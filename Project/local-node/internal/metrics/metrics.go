@@ -50,6 +50,27 @@ var (
 		Name: "potbuddy_device_online",
 		Help: "1 if device sent a reading within the last 30 s, 0 otherwise",
 	}, []string{"device"})
+
+	// Sunlight Exposure Metrics
+	sunDirectMinutes = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "potbuddy_sun_direct_minutes",
+		Help: "Minutes of direct sun exposure today",
+	}, []string{"device"})
+
+	sunIndirectMinutes = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "potbuddy_sun_indirect_minutes",
+		Help: "Minutes of indirect sun exposure today",
+	}, []string{"device"})
+
+	sunYesterdayTotal = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "potbuddy_sun_yesterday_total_minutes",
+		Help: "Total sun exposure (direct + indirect) from yesterday",
+	}, []string{"device"})
+
+	sunStatus = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "potbuddy_sun_status",
+		Help: "Sun status (0=Healthy, 1=Too Much, 2=Too Little)",
+	}, []string{"device"})
 )
 
 // deviceHeartbeats tracks the last-seen time per device for the online watchdog.
@@ -84,6 +105,17 @@ func overallStatusValue(s string) float64 {
 	case strings.HasPrefix(s, "warning"):
 		return 1
 	case strings.HasPrefix(s, "critical"):
+		return 2
+	default:
+		return 0
+	}
+}
+
+func sunStatusValue(s string) float64 {
+	switch s {
+	case processor.StatusSunTooMuch:
+		return 1
+	case processor.StatusSunTooLittle:
 		return 2
 	default:
 		return 0
@@ -142,6 +174,12 @@ func Update(p processor.EnrichedPayload) {
 	healthStatus.WithLabelValues(dev, "temp").Set(sensorStatusValue(p.Status.Temp))
 	healthStatus.WithLabelValues(dev, "hum").Set(sensorStatusValue(p.Status.Hum))
 	healthStatus.WithLabelValues(dev, "soil").Set(sensorStatusValue(p.Status.Soil))
-	
+
+	// Sunlight metrics
+	sunDirectMinutes.WithLabelValues(dev).Set(float64(p.Sun.TodayDirect))
+	sunIndirectMinutes.WithLabelValues(dev).Set(float64(p.Sun.TodayIndirect))
+	sunYesterdayTotal.WithLabelValues(dev).Set(float64(p.Sun.YesterdayTotal))
+	sunStatus.WithLabelValues(dev).Set(sunStatusValue(p.Sun.Status))
+
 	readingsTotal.WithLabelValues(dev).Inc()
 }

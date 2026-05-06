@@ -35,6 +35,16 @@ func main() {
 	}
 	log.Printf("PotBuddy Local Node starting (device: %s)", cfg.DeviceID)
 
+	// Set timezone offset from config
+	processor.SetTimezoneOffset(cfg.TZOffset)
+	log.Printf("[main] Timezone offset configured to UTC%+d", cfg.TZOffset)
+
+	// Set Prometheus URL for historical sun data recovery
+	if cfg.Prometheus.URL != "" {
+		processor.SetPrometheusURL(cfg.Prometheus.URL)
+		log.Printf("[main] Prometheus recovery enabled via %s", cfg.Prometheus.URL)
+	}
+
 	// --- Database setup ---
 	if cfg.Database.DSN != "" {
 		if err := db.InitDB(cfg.Database.DSN); err != nil {

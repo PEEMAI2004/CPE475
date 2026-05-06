@@ -24,18 +24,32 @@ type FieldStatus struct {
 	Soil    string `json:"soil"`
 }
 
+// SunlightReport provides daily exposure statistics.
+type SunlightReport struct {
+	TodayDirect    int    `json:"today_direct_min"`
+	TodayIndirect  int    `json:"today_indirect_min"`
+	YesterdayTotal int    `json:"yesterday_total_min"`
+	Status         string `json:"status"`
+}
+
 // EnrichedPayload is the full processed message published to the cloud and
 // stored in the ring buffer.
 type EnrichedPayload struct {
-	DeviceID  string      `json:"device_id"`
-	Timestamp time.Time   `json:"timestamp"`
-	Raw       RawReading  `json:"raw"`
-	Status    FieldStatus `json:"status"`
-	Message   string      `json:"message"`
+	DeviceID  string         `json:"device_id"`
+	Timestamp time.Time      `json:"timestamp"`
+	Raw       RawReading     `json:"raw"`
+	Status    FieldStatus    `json:"status"`
+	Sun       SunlightReport `json:"sunlight"`
+	Message   string         `json:"message"`
 }
 
 // humanMessage returns a friendly description for the overall status.
-func humanMessage(overall string) string {
+func humanMessage(overall string, sunStatus string, sunStats SunStats, yesterday int) string {
+	// If there's a sun alert, prioritize it in the message
+	if sunStatus != StatusHealthy && sunStatus != "" {
+		return humanSunMessage(sunStatus, sunStats, yesterday)
+	}
+
 	switch {
 	case overall == StatusHealthy:
 		return "Plant is healthy today 🌱"
@@ -60,33 +74,39 @@ func Parse(raw []byte) (RawReading, error) {
 func Enrich(r RawReading, deviceID string) EnrichedPayload {
 	overall := StatusHealthy
 
-	// Evaluate light.
+	// 1. Track Sunlight Exposure
+	if r.Light != nil {
+		TrackSunlight(deviceID, *r.Light)
+	}
+	sunStats, yesterday := GetSunSummary(deviceID)
+
+	// 2. Evaluate Sensors
 	lightStatus := StatusHealthy
 	if r.Light != nil {
 		lightStatus = Evaluate(deviceID, "light", *r.Light)
 		overall = worstStatus(overall, lightStatus)
 	}
 
-	// Evaluate temperature.
 	tempStatus := StatusHealthy
 	if r.Temp != nil {
 		tempStatus = Evaluate(deviceID, "temp", *r.Temp)
 		overall = worstStatus(overall, tempStatus)
 	}
 
-	// Evaluate humidity.
 	humStatus := StatusHealthy
 	if r.Hum != nil {
 		humStatus = Evaluate(deviceID, "hum", *r.Hum)
 		overall = worstStatus(overall, humStatus)
 	}
 
-	// Evaluate soil moisture.
 	soilStatus := StatusHealthy
 	if r.Soil != nil {
 		soilStatus = Evaluate(deviceID, "soil", *r.Soil)
 		overall = worstStatus(overall, soilStatus)
 	}
+
+	// Sunlight status also influences overall rollup
+	overall = worstStatus(overall, sunStats.Status)
 
 	return EnrichedPayload{
 		DeviceID:  deviceID,
@@ -99,6 +119,12 @@ func Enrich(r RawReading, deviceID string) EnrichedPayload {
 			Hum:     humStatus,
 			Soil:    soilStatus,
 		},
-		Message: humanMessage(overall),
+		Sun: SunlightReport{
+			TodayDirect:    sunStats.DirectMinutes,
+			TodayIndirect:  sunStats.IndirectMinutes,
+			YesterdayTotal: yesterday,
+			Status:         sunStats.Status,
+		},
+		Message: humanMessage(overall, sunStats.Status, sunStats, yesterday),
 	}
 }

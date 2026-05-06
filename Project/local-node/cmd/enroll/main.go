@@ -42,7 +42,7 @@ func main() {
 
 	keyBytes := x509.MarshalPKCS1PrivateKey(key)
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes})
-	
+
 	keyFile := "client.key"
 	if *enrollType == "mqtt" {
 		keyFile = "server.key"
@@ -76,7 +76,7 @@ func main() {
 		log.Fatalf("failed to create CSR: %v", err)
 	}
 	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrBytes})
-	
+
 	csrFile := "client.csr"
 	if *enrollType == "mqtt" {
 		csrFile = "server.csr"
@@ -112,7 +112,7 @@ func main() {
 		log.Fatalf("failed to create request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	if *nodeToken != "" {
 		req.Header.Set("X-PotBuddy-Token", *nodeToken)
 	} else {

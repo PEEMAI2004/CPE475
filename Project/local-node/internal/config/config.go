@@ -3,19 +3,22 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
 
 // Config holds all runtime configuration for the local node.
 type Config struct {
-	LocalMQTT        MQTTConfig `yaml:"local_mqtt"`
-	CloudMQTT        MQTTConfig `yaml:"cloud_mqtt"`
-	HTTP             HTTPConfig `yaml:"http"`
+	LocalMQTT        MQTTConfig  `yaml:"local_mqtt"`
+	CloudMQTT        MQTTConfig  `yaml:"cloud_mqtt"`
+	HTTP             HTTPConfig  `yaml:"http"`
 	Store            StoreConfig `yaml:"store"`
 	Database         DBConfig    `yaml:"database"`
+	Prometheus       PromConfig  `yaml:"prometheus"`
 	DeviceID         string      `yaml:"device_id"`
 	ValidateDeviceID bool        `yaml:"validate_device_id"`
+	TZOffset         int         `yaml:"tz_offset"` // Timezone offset in hours
 }
 
 // MQTTConfig holds connection settings for an MQTT broker.
@@ -37,6 +40,11 @@ type HTTPConfig struct {
 	CAFile   string `yaml:"ca_file"`
 	CertFile string `yaml:"cert_file"`
 	KeyFile  string `yaml:"key_file"`
+}
+
+// PromConfig holds settings for Prometheus recovery.
+type PromConfig struct {
+	URL string `yaml:"url"`
 }
 
 // StoreConfig holds settings for the in-memory ring buffer.
@@ -61,6 +69,11 @@ func Load(path string) (*Config, error) {
 	var cfg Config
 	if err := yaml.NewDecoder(f).Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("config: decode: %w", err)
+	}
+
+	// Default to UTC+7 (Bangkok) if not set
+	if cfg.TZOffset == 0 {
+		cfg.TZOffset = 7
 	}
 
 	// Allow environment variable overrides.
@@ -97,11 +110,19 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("HTTP_KEY_FILE"); v != "" {
 		cfg.HTTP.KeyFile = v
 	}
+	if v := os.Getenv("PROM_URL"); v != "" {
+		cfg.Prometheus.URL = v
+	}
 	if v := os.Getenv("DEVICE_ID"); v != "" {
 		cfg.DeviceID = v
 	}
 	if v := os.Getenv("VALIDATE_DEVICE_ID"); v != "" {
 		cfg.ValidateDeviceID = (v == "true" || v == "1")
+	}
+	if v := os.Getenv("TZ_OFFSET_HOURS"); v != "" {
+		if offset, err := strconv.Atoi(v); err == nil {
+			cfg.TZOffset = offset
+		}
 	}
 
 	return &cfg, nil

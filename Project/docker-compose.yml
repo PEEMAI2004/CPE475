@@ -27,6 +27,13 @@ services:
       timeout: 5s
       retries: 5
 
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus_local.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9091:9090"
+
   local-node:
     build: 
       context: ./local-node
@@ -34,8 +41,10 @@ services:
     ports:
       - "8080:8080"
     environment:
+      CONFIG_PATH: "/opt/potbuddy/local-node/config.yaml"
       LOCAL_BROKER: "tcp://mqtt:1883"
       DB_DSN: "postgres://postgres:postgres@postgres:5432/potbuddy?sslmode=disable"
+      PROM_URL: "http://prometheus:9090"
       DEVICE_ID: "esp32-docker-root-node"
       VALIDATE_DEVICE_ID: "true"
       HTTP_CA_FILE: "/certs/ca.crt"
@@ -47,6 +56,8 @@ services:
       postgres:
         condition: service_healthy
       mqtt:
+        condition: service_started
+      prometheus:
         condition: service_started
 
   manager-api:

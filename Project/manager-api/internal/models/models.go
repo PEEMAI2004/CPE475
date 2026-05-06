@@ -7,24 +7,27 @@ import (
 )
 
 type Profile struct {
-	ID             int      `json:"id"`
-	Name           string   `json:"name"`
-	SoilInnerLow   *float64 `json:"soil_inner_low"`
-	SoilInnerHigh  *float64 `json:"soil_inner_high"`
-	SoilOuterLow   *float64 `json:"soil_outer_low"`
-	SoilOuterHigh  *float64 `json:"soil_outer_high"`
-	TempInnerLow   *float64 `json:"temp_inner_low"`
-	TempInnerHigh  *float64 `json:"temp_inner_high"`
-	TempOuterLow   *float64 `json:"temp_outer_low"`
-	TempOuterHigh  *float64 `json:"temp_outer_high"`
-	HumInnerLow    *float64 `json:"hum_inner_low"`
-	HumInnerHigh   *float64 `json:"hum_inner_high"`
-	HumOuterLow    *float64 `json:"hum_outer_low"`
-	HumOuterHigh   *float64 `json:"hum_outer_high"`
-	LightInnerLow  *float64 `json:"light_inner_low"`
-	LightInnerHigh *float64 `json:"light_inner_high"`
-	LightOuterLow  *float64 `json:"light_outer_low"`
-	LightOuterHigh *float64 `json:"light_outer_high"`
+	ID                  int      `json:"id"`
+	Name                string   `json:"name"`
+	SoilInnerLow        *float64 `json:"soil_inner_low"`
+	SoilInnerHigh       *float64 `json:"soil_inner_high"`
+	SoilOuterLow        *float64 `json:"soil_outer_low"`
+	SoilOuterHigh       *float64 `json:"soil_outer_high"`
+	TempInnerLow        *float64 `json:"temp_inner_low"`
+	TempInnerHigh       *float64 `json:"temp_inner_high"`
+	TempOuterLow        *float64 `json:"temp_outer_low"`
+	TempOuterHigh       *float64 `json:"temp_outer_high"`
+	HumInnerLow         *float64 `json:"hum_inner_low"`
+	HumInnerHigh        *float64 `json:"hum_inner_high"`
+	HumOuterLow         *float64 `json:"hum_outer_low"`
+	HumOuterHigh        *float64 `json:"hum_outer_high"`
+	LightInnerLow       *float64 `json:"light_inner_low"`
+	LightInnerHigh      *float64 `json:"light_inner_high"`
+	LightOuterLow       *float64 `json:"light_outer_low"`
+	LightOuterHigh      *float64 `json:"light_outer_high"`
+	SunDirectThreshold  *float64 `json:"sun_direct_threshold"`
+	MaxDirectSunMinutes *int     `json:"max_direct_sun_minutes"`
+	MinTotalSunMinutes  *int     `json:"min_total_sun_minutes"`
 }
 
 type Device struct {

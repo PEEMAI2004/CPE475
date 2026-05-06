@@ -11,7 +11,7 @@ BASE_URL = os.getenv("BASE_URL", "http://localhost:8081/api")
 ADMIN_TOKEN = os.getenv("TOKEN", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6ImFkbWluQHRlc3QuY29tIiwicm9sZSI6IlN1cGVyIEFkbWluIiwiZXhwIjoxNzc4MDYwMjQxfQ.dCE9-R8FYVGTmI9tHIxbbvnmOT0Wkxgorap9j9Jkl2E")
 ENROLL_BIN = os.path.abspath("local-node/bin/enroll")
 NODE_BIN = os.path.abspath("local-node/bin/node")
-MOCK_PUB_BIN = os.path.abspath("mock_device_pub.py")
+MOCK_PUB_BIN = os.path.abspath("testcases/mock_device_pub.py")
 WORK_DIR = os.path.abspath("test-e2e-workdir")
 MQTT_PORT = 18833
 NODE_API_PORT = 18080
@@ -24,7 +24,8 @@ def cleanup_dir(path):
     os.makedirs(path)
 
 def run_enroll(token, enroll_type="node", cn=None, workdir=None):
-    cmd = [ENROLL_BIN, "-token", token, "-manager", "http://localhost:8081"]
+    manager_url = BASE_URL.replace("/api", "")
+    cmd = [ENROLL_BIN, "-token", token, "-manager", manager_url]
     if enroll_type == "mqtt":
         cmd.extend(["-type", "mqtt", "-cn", cn or "localhost"])
     

@@ -12,10 +12,10 @@ import (
 
 // Publisher publishes enriched payloads to one or more MQTT brokers.
 type Publisher struct {
-	localClient pahomqtt.Client
-	cloudClient pahomqtt.Client
-	localTopic  string
-	cloudTopic  string
+	localClient  pahomqtt.Client
+	cloudClient  pahomqtt.Client
+	localTopic   string
+	cloudTopic   string
 	cloudEnabled bool
 }
 
