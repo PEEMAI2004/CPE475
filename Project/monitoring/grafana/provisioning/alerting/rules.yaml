@@ -1,0 +1,470 @@
+apiVersion: 1
+
+groups:
+  - name: PotBuddy Alerts
+    folder: Managed Alerts
+    interval: 1m
+    rules:
+      - uid: potbuddy_critical_soil
+        title: "Critical: Low Soil Moisture"
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              expr: 'max by (device, site) (potbuddy_soil_raw) > 3000'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        annotations:
+          summary: "{{ $labels.device }} at {{ $labels.site }} is low on water ({{ $values.A.Value }})"
+        labels:
+          severity: critical
+        notification_settings:
+          receiver: Discord Notifications
+
+  - name: Connectivity Alerts
+    folder: Managed Alerts
+    interval: 1m
+    rules:
+      - uid: pb_alert_site_offline
+        title: "❌ Site Offline"
+        condition: A
+        for: 1m
+        noDataState: OK
+        execErrState: OK
+        data:
+          - refId: A
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              expr: 'up{job="potbuddy-local-node"} == 0'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+        annotations:
+          summary: "{{ $labels.site }} offline"
+        labels:
+          severity: critical
+        notification_settings:
+          receiver: Discord Notifications
+
+      - uid: pb_alert_site_online
+        title: "✅ Site Online"
+        condition: A
+        for: 0s
+        noDataState: OK
+        execErrState: OK
+        data:
+          - refId: A
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              expr: 'up{job="potbuddy-local-node"} == 1'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+        annotations:
+          summary: "{{ $labels.site }} online"
+        labels:
+          severity: info
+        notification_settings:
+          receiver: Discord Notifications
+
+      - uid: pb_alert_device_offline
+        title: "❌ Site Offline"
+        condition: A
+        for: 1m
+        noDataState: OK
+        execErrState: OK
+        data:
+          - refId: A
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              expr: 'up{job="potbuddy-local-node"} == 0'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+        annotations:
+          summary: "{{ $labels.site }} offline"
+        labels:
+          severity: critical
+        notification_settings:
+          receiver: Discord Notifications
+
+      - uid: pb_alert_site_online
+        title: "✅ Site Online"
+        condition: A
+        for: 0s
+        noDataState: OK
+        execErrState: OK
+        data:
+          - refId: A
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              expr: 'up{job="potbuddy-local-node"} == 1'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+        annotations:
+          summary: "{{ $labels.site }} online"
+        labels:
+          severity: info
+        notification_settings:
+          receiver: Discord Notifications
+
+      - uid: pb_alert_device_offline
+        title: "❌ Device Offline"
+        condition: A
+        for: 1m
+        noDataState: OK
+        execErrState: OK
+        data:
+          - refId: A
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              expr: 'max by (device, site) (potbuddy_device_online) == 0'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+        annotations:
+          summary: "{{ $labels.device }} went offline"
+        labels:
+          severity: critical
+        notification_settings:
+          receiver: Discord Notifications
+
+      - uid: pb_alert_device_online
+        title: "✅ Device Online"
+        condition: A
+        for: 0s
+        noDataState: OK
+        execErrState: OK
+        data:
+          - refId: A
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              expr: 'max by (device, site) (potbuddy_device_online) == 1'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+        annotations:
+          summary: "{{ $labels.device }} now online"
+        labels:
+          severity: info
+        notification_settings:
+          receiver: Discord Notifications
+
+  - name: Detailed Range Alerts
+    folder: Managed Alerts
+    interval: 1m
+    rules:
+      # --- Temperature ---
+      - uid: pb_alert_temp_high
+        title: "🌡️ Alert: Too Hot"
+        condition: A
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        data:
+          - refId: A
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'max by (device, site) (potbuddy_health_status{field="temp"} == 2 or potbuddy_health_status{field="temp"} == 4) and on(device) (max by (device) (potbuddy_device_online) == 1)'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+          - refId: B
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'max by (device, site) (potbuddy_temperature_celsius)'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+        annotations:
+          summary: "{{ $labels.device }} at {{ $labels.site }} is too hot ({{ $values.B.Value }}°C)"
+        labels:
+          severity: warning
+        notification_settings:
+          receiver: Discord Notifications
+
+      - uid: pb_alert_temp_low
+        title: "❄️ Alert: Too Cold"
+        condition: A
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        data:
+          - refId: A
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'max by (device, site) (potbuddy_health_status{field="temp"} == 1 or potbuddy_health_status{field="temp"} == 3) and on(device) (max by (device) (potbuddy_device_online) == 1)'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+          - refId: B
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'max by (device, site) (potbuddy_temperature_celsius)'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+        annotations:
+          summary: "{{ $labels.device }} at {{ $labels.site }} is too cold ({{ $values.B.Value }}°C)"
+        labels:
+          severity: warning
+        notification_settings:
+          receiver: Discord Notifications
+
+      # --- Humidity ---
+      - uid: pb_alert_hum_high
+        title: "💧 Alert: Too Much Hum"
+        condition: A
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        data:
+          - refId: A
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'max by (device, site) (potbuddy_health_status{field="hum"} == 2 or potbuddy_health_status{field="hum"} == 4) and on(device) (max by (device) (potbuddy_device_online) == 1)'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+          - refId: B
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'max by (device, site) (potbuddy_humidity_percent)'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+        annotations:
+          summary: "{{ $labels.device }} at {{ $labels.site }} is too wet ({{ $values.B.Value }}%)"
+        labels:
+          severity: warning
+        notification_settings:
+          receiver: Discord Notifications
+
+      - uid: pb_alert_hum_low
+        title: "🌵 Alert: Too Less Hum"
+        condition: A
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        data:
+          - refId: A
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'max by (device, site) (potbuddy_health_status{field="hum"} == 1 or potbuddy_health_status{field="hum"} == 3) and on(device) (max by (device) (potbuddy_device_online) == 1)'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+          - refId: B
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'max by (device, site) (potbuddy_humidity_percent)'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+        annotations:
+          summary: "{{ $labels.device }} at {{ $labels.site }} is too dry ({{ $values.B.Value }}%)"
+        labels:
+          severity: warning
+        notification_settings:
+          receiver: Discord Notifications
+
+      # --- Soil ---
+      - uid: pb_alert_soil_wet
+        title: "🌊 Alert: Too Wet"
+        condition: A
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        data:
+          - refId: A
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'max by (device, site) (potbuddy_health_status{field="soil"} == 1 or potbuddy_health_status{field="soil"} == 3) and on(device) (max by (device) (potbuddy_device_online) == 1)'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+          - refId: B
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'max by (device, site) (potbuddy_soil_raw)'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+        annotations:
+          summary: "{{ $labels.device }} at {{ $labels.site }} is too wet ({{ $values.B.Value }})"
+        labels:
+          severity: warning
+        notification_settings:
+          receiver: Discord Notifications
+
+      - uid: pb_alert_soil_dry
+        title: "🥀 Alert: Too Dry"
+        condition: A
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        data:
+          - refId: A
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'max by (device, site) (potbuddy_health_status{field="soil"} == 2 or potbuddy_health_status{field="soil"} == 4) and on(device) (max by (device) (potbuddy_device_online) == 1)'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+          - refId: B
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'max by (device, site) (potbuddy_soil_raw)'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+        annotations:
+          summary: "{{ $labels.device }} at {{ $labels.site }} is too dry ({{ $values.B.Value }})"
+        labels:
+          severity: critical
+        notification_settings:
+          receiver: Discord Notifications
+
+      # --- Light / Sun ---
+      - uid: pb_alert_light_high
+        title: "☀️ Alert: Too Much Sun"
+        condition: A
+        noDataState: OK
+        execErrState: OK
+        for: 10m
+        data:
+          - refId: A
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'max by (device, site) (potbuddy_health_status{field="light"} == 2 or potbuddy_health_status{field="light"} == 4) and on(device) (max by (device) (potbuddy_device_online) == 1)'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+          - refId: B
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'max by (device, site) (potbuddy_light_lux)'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+        annotations:
+          summary: "{{ $labels.device }} at {{ $labels.site }} has too much sun ({{ $values.B.Value }} lux)"
+        labels:
+          severity: warning
+        notification_settings:
+          receiver: Discord Notifications
+
+      - uid: pb_alert_sun_status
+        title: "📊 Alert: Sun Exposure Issue"
+        condition: A
+        noDataState: OK
+        execErrState: OK
+        for: 1m
+        data:
+          - refId: A
+            datasourceUid: "dfjafdvrpnocgd"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'max by (device, site) (potbuddy_sun_status{device=~".*"} > 0)'
+              instant: true
+              datasource:
+                type: prometheus
+                uid: dfjafdvrpnocgd
+        annotations:
+          summary: "Sun exposure status issue for {{ $labels.device }} at {{ $labels.site }}!"
+        labels:
+          severity: warning
+        notification_settings:
+          receiver: Discord Notifications

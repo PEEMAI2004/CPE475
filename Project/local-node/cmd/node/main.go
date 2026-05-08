@@ -42,7 +42,8 @@ func main() {
 	// Set Prometheus URL for historical sun data recovery
 	if cfg.Prometheus.URL != "" {
 		processor.SetPrometheusURL(cfg.Prometheus.URL)
-		log.Printf("[main] Prometheus recovery enabled via %s", cfg.Prometheus.URL)
+		processor.SetPromLookbackHours(cfg.Prometheus.LookbackHours)
+		log.Printf("[main] Prometheus recovery enabled via %s (lookback: %dh)", cfg.Prometheus.URL, cfg.Prometheus.LookbackHours)
 	}
 
 	// --- Database setup ---

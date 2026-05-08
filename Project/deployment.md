@@ -88,6 +88,21 @@ scrape_configs:
       key_file: /etc/prometheus/certs/prometheus.key
     static_configs:
       - targets: ['site-0.example.com:8080', 'site-1.example.com:8080']
+
+### Grafana Alerting (Discord Webhook)
+Provisioning files for Discord notifications are located in `Project/monitoring/grafana/provisioning/alerting/`.
+
+**To deploy to the central Grafana server:**
+1. Copy the YAML files to the server:
+   ```bash
+   scp -r Project/monitoring/grafana/provisioning/alerting root@grafana.iot.kaminjitt.com:/etc/grafana/provisioning/
+   ```
+2. Restart Grafana to apply changes:
+   ```bash
+   ssh root@grafana.iot.kaminjitt.com "systemctl restart grafana-server"
+   ```
+
+The system will now have a "Discord Notifications" contact point available for all alert rules.
 ```
 
 ---

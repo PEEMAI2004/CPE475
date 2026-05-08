@@ -48,15 +48,17 @@ func TestGetProfiles(t *testing.T) {
 		"temp_inner_low", "temp_inner_high", "temp_outer_low", "temp_outer_high",
 		"hum_inner_low", "hum_inner_high", "hum_outer_low", "hum_outer_high",
 		"light_inner_low", "light_inner_high", "light_outer_low", "light_outer_high",
+		"sun_direct_threshold", "max_direct_sun_minutes", "min_total_sun_minutes",
 	}).AddRow(
 		1, "test_profile", 
 		100.0, 200.0, 50.0, 250.0,
 		20.0, 30.0, 15.0, 35.0,
 		40.0, 60.0, 30.0, 70.0,
 		1000.0, 3000.0, 500.0, 5000.0,
+		30000.0, 180, 360,
 	)
 
-	mock.ExpectQuery("SELECT \\* FROM profiles ORDER BY id").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT id, name, .* FROM profiles ORDER BY id").WillReturnRows(rows)
 
 	req, err := http.NewRequest("GET", "/api/profiles", nil)
 	if err != nil {
@@ -125,9 +127,9 @@ func TestMachineAuthMiddleware(t *testing.T) {
 	defer cleanup()
 
 	// Test Node Token
-	mock.ExpectQuery("SELECT name FROM infrastructure_nodes WHERE token = \\$1").
+	mock.ExpectQuery("SELECT id, name FROM infrastructure_nodes WHERE token = \\$1").
 		WithArgs("pb_node_valid").
-		WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("test-node"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(1, "test-node"))
 
 	req, _ := http.NewRequest("POST", "/api/infrastructure/heartbeat", nil)
 	req.Header.Set("X-PotBuddy-Token", "pb_node_valid")

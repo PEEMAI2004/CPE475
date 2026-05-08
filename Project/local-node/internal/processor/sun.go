@@ -26,6 +26,7 @@ var (
 	todayStats     = make(map[string]*SunStats)
 	yesterdayStats = make(map[string]*SunStats)
 	promURL        string
+	promLookback   int = 1 // Default to 1 hour
 	tzOffset       int = 7 // Default to UTC+7
 )
 
@@ -37,6 +38,13 @@ func init() {
 // SetPrometheusURL sets the URL used for historical recovery.
 func SetPrometheusURL(url string) {
 	promURL = url
+}
+
+// SetPromLookbackHours sets the maximum lookback window for Prometheus recovery.
+func SetPromLookbackHours(hours int) {
+	trackerMu.Lock()
+	promLookback = hours
+	trackerMu.Unlock()
 }
 
 // SetTimezoneOffset sets the timezone offset in hours.
@@ -123,8 +131,29 @@ func finalizeRestoration(deviceID string, direct, indirect int) {
 }
 
 func queryPromSingle(deviceID string, metric string) int {
-	// Simple instant query for the latest value
-	q := fmt.Sprintf("%s{device=\"%s\"}", metric, strings.ToLower(deviceID))
+	trackerMu.RLock()
+	offset := tzOffset
+	lookbackHours := promLookback
+	trackerMu.RUnlock()
+
+	loc := time.FixedZone("Configured", offset*3600)
+	now := time.Now().In(loc)
+	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	duration := now.Sub(midnight)
+
+	// Don't look back further than the configured maximum lookback
+	maxLookback := time.Duration(lookbackHours) * time.Hour
+	if duration > maxLookback {
+		duration = maxLookback
+	}
+	if duration < 1*time.Minute {
+		duration = 1 * time.Minute
+	}
+	durStr := fmt.Sprintf("%dm", int(duration.Minutes()))
+
+	// Query for the max value over the calculated duration to avoid race conditions
+	// where a restart briefly reports 0 before recovery completes.
+	q := fmt.Sprintf("max_over_time(%s{device=\"%s\"}[%s])", metric, strings.ToLower(deviceID), durStr)
 	apiURL := fmt.Sprintf("%s/api/v1/query?query=%s", promURL, url.QueryEscape(q))
 
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -172,6 +201,7 @@ func GetSunSummary(deviceID string) (current SunStats, yesterday int) {
 
 func runSunlightJobs() {
 	ticker := time.NewTicker(5 * time.Minute)
+	lastRolloverDay := -1
 	for range ticker.C {
 		trackerMu.RLock()
 		offset := tzOffset
@@ -182,11 +212,22 @@ func runSunlightJobs() {
 		now := time.Now().In(loc)
 
 		trackerMu.Lock()
-		if now.Hour() == 0 && now.Minute() < 10 {
+		if now.Hour() == 0 && now.Day() != lastRolloverDay {
 			for k, v := range todayStats {
-				yesterdayStats[k] = v
+				// Deep copy stats for yesterday
+				yesterdayStats[k] = &SunStats{
+					DirectMinutes:   v.DirectMinutes,
+					IndirectMinutes: v.IndirectMinutes,
+					LastUpdate:      v.LastUpdate,
+					Status:          v.Status,
+					Restoring:       false,
+				}
+				// Reset today's stats in-place so TrackSunlight doesn't trigger a Prometheus restore
+				v.DirectMinutes = 0
+				v.IndirectMinutes = 0
+				v.Status = StatusHealthy
 			}
-			todayStats = make(map[string]*SunStats)
+			lastRolloverDay = now.Day()
 		}
 
 		if now.Hour() >= 18 {

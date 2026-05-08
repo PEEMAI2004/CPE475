@@ -67,20 +67,21 @@ func TestEnrich_HotDay_WarningHigh(t *testing.T) {
 	}
 }
 
-func TestEnrich_Dark_CriticalLow(t *testing.T) {
+func TestEnrich_Dark_Healthy(t *testing.T) {
+	// Lower light bounds are ignored to prevent false alerts at night.
 	raw := RawReading{
-		Light: ptr(100), // below outer low → critical_low
+		Light: ptr(100), // below outer low, but should be ignored
 		Temp:  ptr(25),
 		Hum:   ptr(55),
 		Soil:  ptr(2000),
 	}
 	p := Enrich(raw, "test-device")
 
-	if p.Status.Light != StatusCriticalLow {
-		t.Errorf("light: expected critical_low, got %s", p.Status.Light)
+	if p.Status.Light != StatusHealthy {
+		t.Errorf("light: expected healthy for low light, got %s", p.Status.Light)
 	}
-	if p.Status.Overall != StatusCriticalLow {
-		t.Errorf("overall: expected critical_low, got %s", p.Status.Overall)
+	if p.Status.Overall != StatusHealthy {
+		t.Errorf("overall: expected healthy for low light, got %s", p.Status.Overall)
 	}
 }
 

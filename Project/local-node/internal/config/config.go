@@ -44,7 +44,8 @@ type HTTPConfig struct {
 
 // PromConfig holds settings for Prometheus recovery.
 type PromConfig struct {
-	URL string `yaml:"url"`
+	URL           string `yaml:"url"`
+	LookbackHours int    `yaml:"lookback_hours"`
 }
 
 // StoreConfig holds settings for the in-memory ring buffer.
@@ -74,6 +75,10 @@ func Load(path string) (*Config, error) {
 	// Default to UTC+7 (Bangkok) if not set
 	if cfg.TZOffset == 0 {
 		cfg.TZOffset = 7
+	}
+	// Default LookbackHours to 1 if not set
+	if cfg.Prometheus.LookbackHours == 0 {
+		cfg.Prometheus.LookbackHours = 1
 	}
 
 	// Allow environment variable overrides.
@@ -112,6 +117,11 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("PROM_URL"); v != "" {
 		cfg.Prometheus.URL = v
+	}
+	if v := os.Getenv("PROM_LOOKBACK_HOURS"); v != "" {
+		if val, err := strconv.Atoi(v); err == nil {
+			cfg.Prometheus.LookbackHours = val
+		}
 	}
 	if v := os.Getenv("DEVICE_ID"); v != "" {
 		cfg.DeviceID = v
