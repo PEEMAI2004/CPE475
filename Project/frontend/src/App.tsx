@@ -87,7 +87,11 @@ function Dashboard({ user, onLogout }: { user: { name: string, role: string }, o
 
   const fetchData = async () => {
     try {
-      if (location.pathname === '/devices' || location.pathname === '/') setDevices(await getDevices());
+      if (location.pathname === '/devices' || location.pathname === '/') {
+        const [d, p] = await Promise.all([getDevices(), getProfiles()]);
+        setDevices(d);
+        setProfiles(p);
+      }
       if (location.pathname === '/profiles') setProfiles(await getProfiles());
       if (location.pathname === '/infrastructure') setInfra(await getInfrastructureHealth());
       if (location.pathname === '/users' && user.role === 'Super Admin') setUsers(await getUsers());
