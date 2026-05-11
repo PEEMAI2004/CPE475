@@ -97,10 +97,48 @@ Best for testing everything on a single machine.
 ### 1. Configuration
 Check `Project/.env` to ensure `GOOGLE_CLIENT_ID` and `JWT_SECRET` are set correctly for local testing.
 
-### 2. Startup
+### 2. Startup & Enrollment
+Docker deployment requires an initial "Enrollment" phase to generate the mTLS certificates used for secure communication.
+
+**Step 2.1: Start Core Infrastructure**
 ```bash
 cd Project/
-docker compose up --build -d
+mkdir -p certs
+docker compose up -d postgres manager-api prometheus
+```
+
+**Step 2.2: Generate Enrollment Tokens**
+In a local environment, you can manually insert tokens into the database to bypass the UI invitation flow:
+```bash
+# Register Local Broker
+docker exec potbuddy-local-postgres-1 psql -U postgres -d potbuddy -c \
+"INSERT INTO infrastructure_nodes (name, type, site_id, address, token) \
+VALUES ('Local Broker', 'MQTT Broker', 0, 'mqtt', 'pb_node_broker_token') ON CONFLICT (token) DO NOTHING;"
+
+# Register Local Node
+docker exec potbuddy-local-postgres-1 psql -U postgres -d potbuddy -c \
+"INSERT INTO infrastructure_nodes (name, type, site_id, address, token) \
+VALUES ('Local Node', 'Local Node', 0, 'localhost', 'pb_node_local_token') ON CONFLICT (token) DO NOTHING;"
+```
+
+**Step 2.3: Run Enrollment Tool**
+Generate the certificates locally. Ensure you have Go installed, or use a pre-compiled binary.
+```bash
+# Enroll Broker
+cd certs/
+go run ../local-node/cmd/enroll/main.go -token pb_node_broker_token -type mqtt -cn mqtt
+
+# Enroll Node
+go run ../local-node/cmd/enroll/main.go -token pb_node_local_token -type node
+
+# Ensure permissions (Required for Mosquitto)
+chmod 644 *
+```
+
+**Step 2.4: Launch Remaining Services**
+```bash
+cd ..
+docker compose up -d mqtt local-node
 ```
 
 ### 3. Verification
