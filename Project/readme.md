@@ -2,6 +2,9 @@
 
 **Plant Care Group | CPE475**
 
+- [🚀 Deployment Guide](deployment.md)
+- [🧪 Test Cases](testcases/testcases.md)
+
 > An affordable, attachable IoT solution for large-scale plant monitoring. Features Zero-Trust security, multi-site distributed processing, and real-time health analytics.
 
 ---
